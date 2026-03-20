@@ -71,10 +71,10 @@ OPENFDA_API_KEY=your_key_here
 
 **Phase I – ML Pipeline (Weeks 1–4)**
 - [x] openFDA API client + EDA
-- [ ] Feature engineering: rolling complaint windows, severity scoring
-- [ ] Recall label join (MAUDE × FDA Recall DB)
-- [ ] Baseline models: Logistic Regression, Random Forest
-- [ ] LightGBM + Optuna tuning
+- [x] Feature engineering: rolling complaint windows, severity scoring
+- [x] Recall label join (MAUDE × FDA Recall DB)
+- [x] Baseline models: Logistic Regression, Random Forest
+- [x] LightGBM + Optuna tuning
 - [ ] Streamlit demo: device type → risk score + feature importance
 
 **Phase II – AI Engineering (Weeks 5–8)**
