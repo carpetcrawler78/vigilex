@@ -6,5 +6,9 @@ data/
 *.csv
 *.json
 .env
+!.env.example
 .ipynb_checkpoints/
 .old/
+models/*.pkl
+models/*.joblib
+models/*.lgb

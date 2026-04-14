@@ -1,0 +1,204 @@
+version: "3.9"
+
+# SentinelAI (vigilex) — Docker Compose
+# Repo: github.com/carpetcrawler78/vigilex
+# Server: Hetzner CX33, Nürnberg
+
+networks:
+  vigilex-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  grafana-data:
+  mlflow-data:
+  ollama-data:
+
+services:
+
+  # ── 1. DATABASE ─────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: vigilex-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-vigilex}
+      POSTGRES_USER: ${POSTGRES_USER:-vigilex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init_db:/docker-entrypoint-initdb.d   # SQL init scripts
+    ports:
+      - "127.0.0.1:5432:5432"   # localhost only, never public
+    networks:
+      - vigilex-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vigilex}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── 2. CACHE / TASK QUEUE ───────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: vigilex-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    ports:
+      - "127.0.0.1:6379:6379"   # localhost only
+    networks:
+      - vigilex-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── 3. FASTAPI BACKEND ──────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: vigilex-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-vigilex}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-vigilex}
+      REDIS_URL: redis://redis:6379/0
+      OPENFDA_API_KEY: ${OPENFDA_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OLLAMA_BASE_URL: http://ollama:11434
+    ports:
+      - "127.0.0.1:8000:8000"
+    networks:
+      - vigilex-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+
+  # ── 4. INGESTION WORKER (MAUDE / FAERS) ─────────────────────
+  worker-ingest:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    container_name: vigilex-worker-ingest
+    restart: unless-stopped
+    command: python -m vigilex.workers.ingest
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-vigilex}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-vigilex}
+      REDIS_URL: redis://redis:6379/0
+      OPENFDA_API_KEY: ${OPENFDA_API_KEY:-}
+    networks:
+      - vigilex-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+
+  # ── 5. MEDDRA CODING WORKER ─────────────────────────────────
+  worker-coding:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    container_name: vigilex-worker-coding
+    restart: unless-stopped
+    command: python -m vigilex.workers.coding
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-vigilex}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-vigilex}
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_BASE_URL: http://ollama:11434
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+    networks:
+      - vigilex-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+
+  # ── 6. SIGNAL DETECTION WORKER (PRR/ROR) ────────────────────
+  worker-signal:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    container_name: vigilex-worker-signal
+    restart: unless-stopped
+    command: python -m vigilex.workers.signal
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-vigilex}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-vigilex}
+      REDIS_URL: redis://redis:6379/0
+    networks:
+      - vigilex-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./src:/app/src
+
+  # ── 7. OLLAMA (LOCAL LLM — GDPR-COMPLIANT) ──────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: vigilex-ollama
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11434:11434"
+    networks:
+      - vigilex-net
+    volumes:
+      - ollama-data:/root/.ollama
+    # Pull model on first start:
+    # docker exec vigilex-ollama ollama pull llama3.2:3b
+
+  # ── 8. GRAFANA DASHBOARD ────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: vigilex-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?GRAFANA_PASSWORD required}
+      GF_SERVER_ROOT_URL: http://localhost:3000
+    ports:
+      - "0.0.0.0:3000:3000"   # public — add firewall rule
+    networks:
+      - vigilex-net
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── 9. MLFLOW (EXPERIMENT TRACKING) ─────────────────────────
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    container_name: vigilex-mlflow
+    restart: unless-stopped
+    command: >
+      mlflow server
+      --backend-store-uri postgresql://${POSTGRES_USER:-vigilex}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-vigilex}
+      --default-artifact-root /mlflow/artifacts
+      --host 0.0.0.0
+      --port 5000
+    ports:
+      - "127.0.0.1:5000:5000"
+    networks:
+      - vigilex-net
+    volumes:
+      - mlflow-data:/mlflow/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy

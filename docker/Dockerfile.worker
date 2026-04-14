@@ -1,0 +1,29 @@
+# SentinelAI (vigilex) -- Worker (ingest / coding / signal)
+# Build context: repo root (docker build -f docker/Dockerfile.worker .)
+# Command is passed via docker-compose.yml:
+#   worker-ingest:  python -m vigilex.workers.ingest
+#   worker-coding:  python -m vigilex.workers.coding
+#   worker-signal:  python -m vigilex.workers.signal
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# System deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python deps first (layer cache)
+COPY requirements-prod.txt .
+RUN pip install --no-cache-dir -r requirements-prod.txt
+
+# Copy application code
+COPY src/ ./src/
+
+ENV PYTHONPATH=/app
+
+# Default entrypoint -- override via command: in docker-compose.yml
+CMD ["python", "-m", "vigilex.workers.ingest"]
