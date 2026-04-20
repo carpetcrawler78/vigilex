@@ -1,0 +1,23 @@
+# SentinelAI (vigilex) -- MAUDE Ingestion Worker (lightweight)
+# Build context: repo root (docker build -f docker/Dockerfile.worker-ingest .)
+#
+# Kein torch, kein transformers -- nur API calls + DB writes.
+# Build-Zeit: ~30s (statt 6min mit torch)
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-ingest.txt .
+RUN pip install --no-cache-dir -r requirements-ingest.txt
+
+COPY src/ ./src/
+
+ENV PYTHONPATH=/app
+
+CMD ["python", "-m", "vigilex.workers.ingest"]

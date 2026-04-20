@@ -86,7 +86,7 @@ services:
   worker-ingest:
     build:
       context: .
-      dockerfile: docker/Dockerfile.worker
+      dockerfile: docker/Dockerfile.worker-ingest
     container_name: vigilex-worker-ingest
     restart: unless-stopped
     command: python -m vigilex.workers.ingest
@@ -109,7 +109,7 @@ services:
   worker-coding:
     build:
       context: .
-      dockerfile: docker/Dockerfile.worker
+      dockerfile: docker/Dockerfile.worker-coding
     container_name: vigilex-worker-coding
     restart: unless-stopped
     command: python -m vigilex.workers.coding
@@ -133,7 +133,7 @@ services:
   worker-signal:
     build:
       context: .
-      dockerfile: docker/Dockerfile.worker
+      dockerfile: docker/Dockerfile.worker-ingest
     container_name: vigilex-worker-signal
     restart: unless-stopped
     command: python -m vigilex.workers.signal

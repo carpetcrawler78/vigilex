@@ -1,0 +1,33 @@
+# SentinelAI (vigilex) -- Coding + Signal Worker dependencies (heavy)
+# Used by: docker/Dockerfile.worker-coding, docker/Dockerfile.worker-signal
+# Includes torch + transformers for PubMedBERT embeddings (Module 2).
+
+# Database
+psycopg2-binary==2.9.9
+pgvector==0.3.5
+
+# HTTP client (Ollama API)
+httpx==0.28.1
+requests==2.32.5
+
+# Data
+pandas==2.2.3
+numpy==1.26.4
+
+# ML / embeddings (Module 2: MedDRA Coding Engine)
+torch==2.4.1
+transformers==4.45.2
+sentence-transformers==3.2.1
+scikit-learn==1.5.2
+lightgbm==4.5.0
+
+# Text matching (hybrid search, rapidfuzz BM25 fallback)
+rapidfuzz==3.10.0
+
+# Config / utils
+python-dotenv==1.0.1
+pydantic==2.9.2
+pydantic-settings==2.5.2
+
+# Logging
+python-json-logger==2.0.7
