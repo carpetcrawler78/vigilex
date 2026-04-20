@@ -18,6 +18,6 @@ RUN pip install --no-cache-dir -r requirements-coding.txt
 
 COPY src/ ./src/
 
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app/src
 
 CMD ["python", "-m", "vigilex.workers.coding"]

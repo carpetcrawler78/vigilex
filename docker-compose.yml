@@ -94,6 +94,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-vigilex}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-vigilex}
       REDIS_URL: redis://redis:6379/0
       OPENFDA_API_KEY: ${OPENFDA_API_KEY:-}
+      PYTHONPATH: /app/src
     networks:
       - vigilex-net
     depends_on:

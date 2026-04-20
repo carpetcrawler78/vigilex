@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir -r requirements-prod.txt
 # Copy application code
 COPY src/ ./src/
 
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app/src
 
 # FastAPI via uvicorn
 CMD ["uvicorn", "vigilex.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
