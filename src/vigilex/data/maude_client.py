@@ -165,11 +165,11 @@ def fetch_maude_by_daterange(
     session = _make_session()
     api_key = api_key or os.environ.get("OPENFDA_API_KEY", "")
 
-    # openFDA Lucene-Syntax: device.device_report_product_code = LZG
-    # AND date_of_event im Zeitfenster
+    # openFDA Lucene-Syntax -- Leerzeichen, requests encodiert korrekt
+    # Notebook-Syntax: 'device.generic_name:"insulin pump" AND date_of_event:[...]'
     search = (
-        f"device.device_report_product_code.exact:{product_code}"
-        f"+AND+date_of_event:[{start_date}+TO+{end_date}]"
+        f"device.device_report_product_code:{product_code}"
+        f" AND date_of_event:[{start_date} TO {end_date}]"
     )
 
     # Erst Total abfragen (1 Record reicht)
