@@ -326,32 +326,12 @@ LEFT JOIN processed.coding_results c     USING (mdr_report_key);
 
 -- =============================================================================
 -- 10. PERMISSIONS
--- Two roles: vigilex_app (read/write for Docker services),
---            vigilex_readonly (for Grafana dashboard — read only)
+-- Roles are created by init_db/02_roles.sh (runs after this file).
+-- Passwords are injected from .env via Docker environment -- never hardcoded.
 -- =============================================================================
 
--- Application user (api, worker containers)
-DO $$ BEGIN
-    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'vigilex_app') THEN
-        CREATE ROLE vigilex_app LOGIN PASSWORD 'CHANGE_ME_IN_ENV';
-    END IF;
-END $$;
-
-GRANT USAGE ON SCHEMA raw, processed TO vigilex_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA raw TO vigilex_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA processed TO vigilex_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA processed TO vigilex_app;
-
--- Grafana read-only user (only needs SELECT on signal_results + search_base)
-DO $$ BEGIN
-    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'vigilex_readonly') THEN
-        CREATE ROLE vigilex_readonly LOGIN PASSWORD 'CHANGE_ME_IN_ENV';
-    END IF;
-END $$;
-
-GRANT USAGE ON SCHEMA raw, processed TO vigilex_readonly;
-GRANT SELECT ON ALL TABLES IN SCHEMA raw TO vigilex_readonly;
-GRANT SELECT ON ALL TABLES IN SCHEMA processed TO vigilex_readonly;
+-- Role creation and GRANT statements live in 02_roles.sh so that
+-- POSTGRES_PASSWORD from .env can be used without hardcoding credentials here.
 
 
 -- =============================================================================
