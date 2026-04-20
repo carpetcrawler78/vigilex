@@ -27,9 +27,10 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;
 -- Used in: performance monitoring — check via pg_stat_statements view
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 
--- Native full-text search (tsvector/tsquery) — complements pg_trgm
--- Used in: keyword baseline search over narrative text
-CREATE EXTENSION IF NOT EXISTS pg_search;
+-- Native full-text search (tsvector/tsquery) is built into PostgreSQL --
+-- no separate extension needed. pg_search (ParadeDB) would require a
+-- different base image (paradedb/paradedb) -- not used here.
+-- tsvector + GIN index (idx_maude_mdr_text_fts below) covers this use case.
 
 
 -- =============================================================================
