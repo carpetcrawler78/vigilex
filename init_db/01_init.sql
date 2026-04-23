@@ -179,7 +179,7 @@ CREATE TABLE IF NOT EXISTS processed.meddra_terms (
     -- dim=768 matches PubMedBERT output; used by FAISS in Module 2
     pt_embedding            VECTOR(768),
 
-    meddra_version          TEXT DEFAULT '27.0'
+    meddra_version          TEXT DEFAULT '29.0'
 );
 
 -- Vector similarity index (IVFFlat — approximate, fast for large MedDRA term sets)
