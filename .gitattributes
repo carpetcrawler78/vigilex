@@ -1,0 +1,22 @@
+# Normalize line endings to LF for all text files in the repo.
+# Reason: Repo is checked out on Windows (dev) and Linux (Hetzner deploy).
+# Without this, Windows editors silently rewrite files as CRLF and
+# pollute every diff. With eol=lf, Git stores LF in the index AND
+# writes LF to the working tree on every platform.
+
+* text=auto eol=lf
+
+# Binary files -- never touch these
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.parquet binary
+*.pkl   binary
+*.joblib binary
+*.lgb   binary
+*.db    binary
+*.sqlite binary
