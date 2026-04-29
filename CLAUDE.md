@@ -145,6 +145,14 @@ Data ingested so far:
 6. Notebook 02 (02_recall_labels.ipynb)
    - Recall label join: MAUDE x FDA Recall DB
    - Check recalled_ever distribution per product code
+   - Retrospective validation: could Module 3 signals have predicted actual recalls?
+
+7. Future work (post-Capstone, not graded)
+   - EUDAMED integration when API becomes available (~May 2026 mandate)
+   - MDR Art. 83-86 compliant report generation (Periodic Safety Update Report template)
+   - LoRA finetuning of LLM on FDA adverse event language (RunPod A40, ~$3-5)
+   - Agent layer: Claude Managed Agents or LangGraph as interactive demo frontend
+   - OpenClaw + Telegram for overnight batch monitoring and alert summaries
 
 ---
 
@@ -178,6 +186,78 @@ Common gotcha: local ny-taxi-db container may conflict on port 5432 -- stop it f
 - word_similarity() not similarity() for BM25 arm (short PT vs long narrative -- Bug #3)
 - First sentence only for query embedding to avoid narrative dilution (Bug #5)
 - IVFFlat probes=100 required for deterministic results on this dataset size (Bug #6)
+- Architecture pivot: original plan (Feb-Mar 2026) included SciSpacy NER, BERTopic
+  cluster detection, FAISS/Weaviate vector DB, and LangGraph agent loop.
+  Final build replaced all of these with a PostgreSQL-native approach
+  (pg_trgm + pgvector + CrossEncoder + Ollama). Simpler, fewer moving parts,
+  all search/storage in one DB. This was an intentional simplification, not a cut.
+- Embedding model: PubMedBERT chosen over allenai-specter (originally discussed).
+  PubMedBERT better captures medical terminology for MedDRA PT matching;
+  specter is optimized for paper-level similarity, not term-level coding.
+- LLM model: llama3.2:3b chosen over originally discussed Qwen2.5:14b/7b.
+  Reason: CX33 runs 9 Docker containers + PostgreSQL on 8 GB RAM.
+  3b model fits comfortably; 14b would OOM under load.
+- Server migration: early planning (pre-Apr 2026) assumed Hetzner CAX11 (ARM).
+  Actual deployment is on CX33 (x86) -- same server as tradetest (user: trader).
+  Vigilex runs under user: cap. Both projects share the CX33 hardware.
+
+---
+
+## Design History (from chat discussions)
+
+This section captures ideas discussed but not (yet) implemented,
+so future sessions don't re-derive them.
+
+Original Capstone II plan (Feb 2026):
+- Option A: Claude Managed Agents with custom tools (query_maude, get_signal_analysis)
+- Option B: Self-hosted LangGraph agent with FAISS, FastAPI, Bedrock eu-central-1
+- Recommendation was "build both" -- Managed Agents for demo, self-hosted for portfolio
+- Current build is neither -- it is a PostgreSQL-native pipeline without an agent layer
+
+Dropped components (consciously):
+- SciSpacy NER -- replaced by MedDRA coding (more structured, better for PMS domain)
+- BERTopic clustering -- deferred; may revisit for Module 3 signal grouping
+- FAISS -- replaced by pgvector IVFFlat (fewer dependencies, single-DB architecture)
+- Weaviate -- same reasoning as FAISS
+- LangGraph / LangChain -- not needed; coding pipeline is deterministic, not agentic
+
+Still viable for future work:
+- LoRA finetuning on RunPod A40 (~$3-5 one-shot) for domain-adapted LLM
+- OpenClaw + Telegram integration for overnight batch monitoring
+- Claude Managed Agents as a demo frontend for the presentation
+
+---
+
+## Presentation Talking Points
+
+From chat discussions -- useful for bootcamp final presentation and job interviews:
+
+- "Why not pure vector search?" -- Hybrid BM25+semantic beats either alone;
+  BM25 catches exact medical terms, semantic catches paraphrases.
+  Weighted RRF fusion is a known IR technique (Cormack et al., 2009).
+- "Why PostgreSQL and not a dedicated vector DB?" -- Single-DB architecture
+  means fewer failure modes, simpler ops, ACID guarantees across search + storage.
+  pgvector IVFFlat is sufficient for <100k terms.
+- "Why local Ollama and not an API?" -- Privacy-by-Design for EU regulated context.
+  Even though MAUDE data is public, the architecture demonstrates GDPR-readiness
+  for real clinical data. Strong differentiator for HealthTech employers.
+- "Why FDA data for a European project?" -- MAUDE is the largest public adverse
+  event database globally. EU MDR Article 83-86 requires post-market surveillance;
+  EUDAMED (mandatory ~May 2026) will be an additional data source.
+  FDA-first is a feature, not a limitation -- shows cross-regulatory competence.
+- Notebook 02 (recall label join) validates the system retrospectively:
+  "Could our signals have predicted actual FDA recalls?"
+
+---
+
+## Related Projects (same infrastructure)
+
+| Project | Repo | Server user | Purpose |
+|---|---|---|---|
+| vigilex / SentinelAI | carpetcrawler78/vigilex | cap | This project (Capstone II) |
+| tradetest | bobschmid/tradetest | trader | Automated trading bot (private, separate) |
+
+Both share Hetzner CX33 (46.225.109.99). Do not mix deployments.
 
 ---
 
