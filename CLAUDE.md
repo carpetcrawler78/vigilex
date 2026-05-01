@@ -156,6 +156,51 @@ Data ingested so far:
 
 ---
 
+## ML Engineering Tooling
+
+### CI/CD (GitHub Actions)
+- ci.yml: ruff + pytest + coverage on every push to `work` branch
+- Deployment: Autopull cron (hetzner_autopull.sh, daily 06:00) -- NOT GitHub Actions
+  Reason: Hetzner firewall restricts inbound SSH to home IP; cron avoids inbound connections
+  entirely and reduces attack surface. Interview framing: intentional architecture decision.
+- Privacy note: CI runners process only infrastructure code, no data/PHI -- no GDPR conflict
+
+### Code Quality
+- ruff -- linting + formatting (replaces black + flake8 + isort)
+- pre-commit hooks: ruff, nbstripout, gitleaks (prevents API key leaks in commits)
+
+### Testing
+- pytest + coverage report as CI artifact
+- Key test targets: flatten_maude_record(), PRR/ROR math, confidence formula (0.3*sigmoid + 0.7*LLM)
+
+### Experiment Tracking & Model Registry
+- MLflow already in Docker Compose -- use Stage transitions actively: Staging -> Production
+- Track: hybrid search weights (w_bm25, w_vector), CE model versions, LLM model + temp
+
+### Monitoring & Drift Detection (Evidently AI)
+- Run after each MAUDE batch import:
+  - Confidence score distribution vs. baseline
+  - flagged rate per product code (LZG, PKU, OYC, FRN, QFG)
+  - PT code diversity (detect degenerate coding toward same few terms)
+- Output: HTML report + JSON for Grafana
+- Interview angle: LLMOps content; in regulated PMS context, drift is MDR Art. 83 relevant
+
+### Data Versioning
+- No DVC -- MAUDE is a public API with deterministic re-ingestion, no DVC use case
+- Instead: data/raw/manifest.json with hash + date-range per ingest run
+- Interview rationale: "DVC evaluated; manifest sufficient for reproducible public API data.
+  DVC added when moving to private training data."
+
+### Hospital-Data-Ready Extensions (not built, but architecturally prepared)
+- pgcrypto column-level encryption (postgres extension, one activation step away)
+- Row-Level Security in PostgreSQL per service-user
+- AVV (Auftragsverarbeitungsvertrag) with Hetzner -- contractual, not technical
+- VPN for hospital-to-server connections instead of SSH tunnel
+- Append-only audit log for PHI access (MDR Art. 10 + DSGVO Art. 30)
+- Interview framing: "Path to clinical data is evolutionary, not a redesign."
+
+---
+
 ## Code Conventions
 
 IMPORTANT -- enforced since 2026-04-10:
