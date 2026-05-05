@@ -13,3 +13,6 @@ raw_data/
 models/*.pkl
 models/*.joblib
 models/*.lgb
+.pytest_cache/
+.coverage
+htmlcov/

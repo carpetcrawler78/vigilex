@@ -1,0 +1,4 @@
+[
+  "tests/test_smoke.py::test_python_works",
+  "tests/test_smoke.py::test_vigilex_package_importable"
+]
