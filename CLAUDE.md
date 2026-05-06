@@ -4,7 +4,7 @@ Read this file first. It is the single source of truth for any AI assistant
 working on this project. Update the "Current Status" and "Next Steps" sections
 at the end of each working session.
 
-Last updated: 2026-04-29
+Last updated: 2026-05-06 (LLM Backend Strategy + Demo Plan added)
 
 ---
 
@@ -153,6 +153,12 @@ Data ingested so far:
    - LoRA finetuning of LLM on FDA adverse event language (RunPod A40, ~$3-5)
    - Agent layer: Claude Managed Agents or LangGraph as interactive demo frontend
    - OpenClaw + Telegram for overnight batch monitoring and alert summaries
+   - Figma -> React frontend for portfolio/recruiter demo
+     Rationale: Streamlit is sufficient for Capstone grading, but a polished
+     React UI (Signal Browser, MAUDE report viewer, Coding Review Queue) gives
+     more visual impact for HealthTech recruiters (Roche, Siemens Healthineers,
+     BfArM). Workflow: design in Figma -> Claude Code generates React + Tailwind
+     -> wire to existing FastAPI endpoints. Estimated effort: 1-2 days post-Capstone.
 
 ---
 
@@ -198,6 +204,83 @@ Data ingested so far:
 - VPN for hospital-to-server connections instead of SSH tunnel
 - Append-only audit log for PHI access (MDR Art. 10 + DSGVO Art. 30)
 - Interview framing: "Path to clinical data is evolutionary, not a redesign."
+
+---
+
+## LLM Backend Strategy (Tier Architecture)
+
+Added 2026-05-06 after EU-AI-Act / DSGVO compliance review.
+
+### Concept
+Not every task needs the same model. The system uses a four-tier mental model:
+
+| Tier | Backend | Use cases in SentinelAI |
+|---|---|---|
+| 0 | No LLM (SQL, regex, math) | flatten_maude_record, PRR/ROR computation, pg_trgm BM25 arm |
+| 1 | Local small model (Ollama llama3.2:3b on Hetzner) | MedDRA coding (Stage 3 multiple-choice over Top-5 PT candidates) -- current production default |
+| 2 | Mid-tier model (larger local OR external mid-tier) | Optional: signal narrative drafts, batch summaries |
+| 3 | Frontier model via EU-resident endpoint | Optional: PMS-style report generation, regulator-facing prose |
+
+### Compliance Constraints (DSGVO + EU AI Act)
+- Tier 0/1 stays on Hetzner CX33 (Nuernberg). Zero data egress, full control.
+- Tier 2/3 must NOT use the direct Anthropic API (data routes via US, workspace data US-only). 
+  Approved external paths: AWS Bedrock eu-central-1 (Frankfurt) or GCP Vertex AI europe-west1 (Belgium).
+  Under Bedrock the AWS DPA applies, Anthropic does not retain prompts/outputs for training.
+- EU AI Act risk attaches to the use case, not the provider:
+  - Pure signal detection on public MAUDE data: not automatically high-risk.
+  - Output piped into MDR Art. 83-86 PSUR workflows: high-risk (Annex III).
+- GPAI documentation advantage of Anthropic: ISO 42001 + ISO 27001 + SOC 2 (drop-in for our technical file). For pure self-hosted llama3.2 the operator provides this documentation.
+- Deadline window: original Aug 2026 high-risk obligations may shift to Dec 2027 (standalone) / Aug 2028 (embedded in regulated products) via Digital Omnibus.
+
+### Implementation Plan (post-Block-D, pre-demo)
+- src/vigilex/coding/llm_backend.py: pluggable backend layer
+  - LocalOllamaBackend (current default)
+  - BedrockEUBackend (Claude Sonnet, eu-central-1)
+  - DirectAnthropicBackend (dev/test only, NEVER production)
+- Config via env: VIGILEX_LLM_BACKEND, AWS_REGION, fallback chain
+- All backends implement same interface: complete(prompt, schema) -> dict
+- Existing LLMCoder constructor takes a backend instance instead of hard-coded Ollama URL
+
+### Architecture Decision Record (informal)
+Status: ACCEPTED 2026-05-06.
+Default for production demo: Tier 1 (local Ollama) for coding, Tier 0 (math + templates) for signals.
+Bonus demo path: Tier 3 (Bedrock EU) only as a backend toggle for the Signal Narrative Generator step in the live demo. This is the strongest architectural talking point: same code path, three backends, explicit tradeoff visible to the audience.
+
+### Privacy-by-Design Talking Point (revised wording)
+OLD: "all LLM inference via local Ollama, no PHI leaves EU infrastructure"
+NEW: "Production data and PHI never leave the Hetzner trust boundary. Optional Tier 3 backend routes through AWS Bedrock eu-central-1 with the AWS DPA in effect; data never leaves EU jurisdiction."
+
+---
+
+## Capstone Demo Plan
+
+Added 2026-05-06.
+
+Total runtime: ~12 min presentation + 5 min Q&A. Demo runs in Streamlit + Grafana, no code edits live.
+
+| Slide | Topic | Time |
+|---|---|---|
+| 1 | Hook: insulin-pump hyperglycaemia case | 45 s |
+| 2 | Problem: MAUDE volume vs MDR Art. 83 manual coding | 60 s |
+| 3 | Architecture overview (3 modules, Postgres-native pivot) | 90 s |
+| 4 | Live: Module 1 ingestion status (Streamlit tab) | 45 s |
+| 5 | Live: Module 2 coding inspector (Hybrid -> Reranker -> LLM) | 3 min |
+| 6 | Live: Module 3 signal alerts (Grafana dashboard) | 2 min |
+| 7 | Tier-Switch wow-moment (Local Template / Ollama / Bedrock EU) | 2 min |
+| 8 | Compliance + architecture justification | 75 s |
+| 9 | Lessons learned (3 bugs from bug-diary) + roadmap | 45 s |
+| 10 | Q&A | 5 min |
+
+Slide 7 is optional. Without Bedrock setup, drop slide 7 and keep slides 1-6 + 8-10. The Tier-Switch demonstration requires:
+- AWS account, IAM user, eu-central-1, Claude Sonnet model access (one-time, ~30-60 min)
+- BedrockEUBackend implemented in vigilex.coding.llm_backend (see plan above)
+- Streamlit toggle in the Signal Narrative Generator tab
+
+Q&A preparation cards (planned):
+- "Why not ChatGPT/Claude direct?" -> EU residency, DSGVO, Bedrock EU as the bridge.
+- "Why FDA data for an EU project?" -> MAUDE is the largest public dataset; EUDAMED follows ~May 2026 mandate.
+- "How do you test for hallucinations?" -> Confidence formula, flagged review queue, Evidently AI drift report on PT-distribution.
+- "Why PostgreSQL and not a vector DB?" -> Single-DB ACID, fewer failure modes, sufficient at <100k terms.
 
 ---
 
