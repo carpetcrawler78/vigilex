@@ -1,0 +1,238 @@
+{
+  "dashboard": {
+    "__inputs": [],
+    "__requires": [],
+    "annotations": {
+      "list": []
+    },
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 1,
+    "id": null,
+    "links": [],
+    "panels": [
+      {
+        "id": 1,
+        "title": "Coding Throughput (records/hour)",
+        "type": "timeseries",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 0
+        },
+        "datasource": {
+          "type": "postgres",
+          "uid": "${DS_VIGILEX-POSTGRES}"
+        },
+        "options": {
+          "tooltip": {
+            "mode": "single"
+          },
+          "legend": {
+            "displayMode": "list",
+            "placement": "bottom"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 10
+            }
+          }
+        },
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "${DS_VIGILEX-POSTGRES}"
+            },
+            "rawSql": "SELECT\n  date_trunc('hour', coded_at) AS time,\n  COUNT(*) AS records_coded\nFROM processed.coding_results\nWHERE coded_at >= NOW() - INTERVAL '7 days'\nGROUP BY 1\nORDER BY 1",
+            "format": "time_series",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Top 15 Adverse Events (PT codes, LZG)",
+        "type": "barchart",
+        "gridPos": {
+          "h": 10,
+          "w": 12,
+          "x": 12,
+          "y": 0
+        },
+        "datasource": {
+          "type": "postgres",
+          "uid": "${DS_VIGILEX-POSTGRES}"
+        },
+        "options": {
+          "orientation": "horizontal",
+          "barWidth": 0.7,
+          "groupWidth": 0.7,
+          "tooltip": {
+            "mode": "single"
+          },
+          "legend": {
+            "displayMode": "hidden"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "fixed",
+              "fixedColor": "blue"
+            },
+            "custom": {
+              "fillOpacity": 80
+            }
+          }
+        },
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "${DS_VIGILEX-POSTGRES}"
+            },
+            "rawSql": "SELECT\n  pt_name,\n  COUNT(*) AS n_reports\nFROM processed.coding_results\nGROUP BY pt_name\nORDER BY n_reports DESC\nLIMIT 15",
+            "format": "table",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Confidence Score Distribution",
+        "type": "histogram",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 8
+        },
+        "datasource": {
+          "type": "postgres",
+          "uid": "${DS_VIGILEX-POSTGRES}"
+        },
+        "options": {
+          "bucketSize": "auto",
+          "fillOpacity": 80,
+          "tooltip": {
+            "mode": "single"
+          }
+        },
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "fixed",
+              "fixedColor": "green"
+            }
+          }
+        },
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "${DS_VIGILEX-POSTGRES}"
+            },
+            "rawSql": "SELECT final_confidence FROM processed.coding_results WHERE final_confidence IS NOT NULL",
+            "format": "table",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Coding Quality Summary",
+        "type": "stat",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 8
+        },
+        "datasource": {
+          "type": "postgres",
+          "uid": "${DS_VIGILEX-POSTGRES}"
+        },
+        "options": {
+          "reduceOptions": {
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": "",
+            "values": false
+          },
+          "orientation": "auto",
+          "textMode": "auto",
+          "colorMode": "background",
+          "graphMode": "none"
+        },
+        "targets": [
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "${DS_VIGILEX-POSTGRES}"
+            },
+            "rawSql": "SELECT\n  COUNT(*) AS \"Total Coded\"\nFROM processed.coding_results",
+            "format": "table",
+            "refId": "A"
+          },
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "${DS_VIGILEX-POSTGRES}"
+            },
+            "rawSql": "SELECT\n  ROUND(AVG(final_confidence)::numeric, 3) AS \"Avg Confidence\"\nFROM processed.coding_results",
+            "format": "table",
+            "refId": "B"
+          },
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "${DS_VIGILEX-POSTGRES}"
+            },
+            "rawSql": "SELECT\n  ROUND(100.0 * SUM(CASE WHEN final_confidence >= 0.7 THEN 1 ELSE 0 END) / COUNT(*)::numeric, 1) AS \"High Confidence %\"\nFROM processed.coding_results",
+            "format": "table",
+            "refId": "C"
+          },
+          {
+            "datasource": {
+              "type": "postgres",
+              "uid": "${DS_VIGILEX-POSTGRES}"
+            },
+            "rawSql": "SELECT COUNT(DISTINCT pt_name) AS \"Unique PT Codes\" FROM processed.coding_results",
+            "format": "table",
+            "refId": "D"
+          }
+        ]
+      }
+    ],
+    "refresh": "30s",
+    "schemaVersion": 38,
+    "tags": [
+      "sentinelai",
+      "meddra",
+      "vigilex"
+    ],
+    "templating": {
+      "list": []
+    },
+    "time": {
+      "from": "now-7d",
+      "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "browser",
+    "title": "SentinelAI -- MedDRA Coding Monitor",
+    "uid": "sentinelai-coding-v1",
+    "version": 1
+  },
+  "overwrite": true,
+  "folderId": 0
+}
