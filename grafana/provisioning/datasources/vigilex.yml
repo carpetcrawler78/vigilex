@@ -7,7 +7,7 @@ datasources:
     url: postgres:5432
     user: vigilex_readonly
     secureJsonData:
-      password: ${POSTGRES_PASSWORD}
+      password: "$GF_POSTGRES_PASSWORD"
     jsonData:
       database: vigilex
       sslmode: disable
@@ -16,4 +16,4 @@ datasources:
       connMaxLifetime: 14400
       postgresVersion: 1600
       timescaledb: false
-    isDefa
+    isD
