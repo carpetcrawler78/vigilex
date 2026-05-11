@@ -60,6 +60,16 @@ OLLAMA_DEFAULT_URL = "http://localhost:11434"
 #   ollama pull llama3.2
 OLLAMA_MODEL = "llama3.2:3b"
 
+# ---------------------------------------------------------------------------
+# Groq backend (EXPERIMENTAL -- NOT FOR PRODUCTION)
+# WARNING: Using Groq sends report narratives to an external API.
+#          Acceptable for benchmarking/capstone dev only.
+#          Do NOT use with real patient data or in a production deployment.
+#          Privacy-by-Design requires on-premise inference (Ollama).
+# ---------------------------------------------------------------------------
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL   = "llama-3.1-8b-instant"  # fast, free tier, OpenAI-compatible API
+
 # The system prompt tells the LLM what role it should play and what rules to follow.
 # Key rules that improve reliability:
 #   - "Select exactly ONE PT from the provided candidates" (prevents hallucination)
@@ -188,22 +198,39 @@ class LLMCoder:
         model: str = OLLAMA_MODEL,
         confidence_threshold: float = 0.5,
         temperature: float = 0.1,
+        use_groq: bool = False,
+        groq_api_key: Optional[str] = None,
     ):
         self.ollama_url = ollama_url.rstrip("/")
         self.model = model
         self.confidence_threshold = confidence_threshold
         self.temperature = temperature
-        # Verify the Ollama server is reachable when the coder is initialised
+        # Groq backend (experimental, external API -- see WARNING above)
+        self.use_groq    = use_groq
+        self.groq_api_key = groq_api_key
+        # Verify the backend is reachable when the coder is initialised
         self._check_connection()
 
     def _check_connection(self) -> None:
         """
-        Verify that the Ollama server is reachable and the required model is loaded.
+        Verify that the configured backend is reachable.
 
-        This is a soft check (warnings, no exceptions) -- if Ollama is down at
-        startup, the coding worker can still start. The per-report LLM call will
-        fail gracefully and fall back to the CrossEncoder result.
+        Groq: checks that GROQ_API_KEY is set (no network call at init).
+        Ollama: checks that the server is reachable and the model is loaded.
+
+        Soft check -- warnings only, no exceptions raised.
         """
+        if self.use_groq:
+            if not self.groq_api_key:
+                print(
+                    "WARNING: --groq requested but GROQ_API_KEY is not set. "
+                    "Export GROQ_API_KEY=<your_key> before starting the worker."
+                )
+            else:
+                print(f"Groq backend active (model: {GROQ_MODEL}). "
+                      "WARNING: narratives will be sent to external API.")
+            return
+        # Ollama path
         try:
             r = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
             r.raise_for_status()
@@ -258,6 +285,47 @@ class LLMCoder:
         )
         r.raise_for_status()
         return r.json()["message"]["content"]
+
+    def _call_groq(self, user_prompt: str) -> str:
+        """
+        Send a chat request to Groq's OpenAI-compatible API.
+
+        WARNING: This sends the report narrative to an external server (Groq).
+                 For benchmarking / capstone development only.
+                 NOT for production use with real patient data.
+
+        Model: llama-3.1-8b-instant (fast free-tier model, ~300 tokens/sec)
+        API:   https://api.groq.com/openai/v1/chat/completions
+        Auth:  Bearer token via GROQ_API_KEY environment variable
+
+        Returns:
+            The model's response text (same format as _call_ollama).
+        """
+        if not self.groq_api_key:
+            raise RuntimeError(
+                "GROQ_API_KEY not set. Export it before running with --groq."
+            )
+        payload = {
+            "model":       GROQ_MODEL,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user",   "content": user_prompt},
+            ],
+            "temperature": self.temperature,
+            "max_tokens":  256,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.groq_api_key}",
+            "Content-Type":  "application/json",
+        }
+        r = requests.post(
+            GROQ_API_URL,
+            json=payload,
+            headers=headers,
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"]
 
     def _parse_response(self, raw: str, candidates: list[RerankedResult]) -> dict:
         """
@@ -342,7 +410,10 @@ class LLMCoder:
         user_prompt = _build_user_prompt(narrative, candidates)
 
         try:
-            raw    = self._call_ollama(user_prompt)
+            if self.use_groq:
+                raw = self._call_groq(user_prompt)
+            else:
+                raw = self._call_ollama(user_prompt)
             parsed = self._parse_response(raw, candidates)
         except Exception as e:
             # Graceful fallback: use the top CrossEncoder result with a low confidence.

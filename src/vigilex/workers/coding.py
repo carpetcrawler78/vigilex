@@ -402,6 +402,7 @@ def _fallback_result(report_key: str, reason: str = "unknown") -> dict:
 
 def load_pipeline(
     skip_llm: bool = False,
+    use_groq: bool = False,
 ) -> tuple[HybridSearcher, CrossEncoderReranker, Optional[LLMCoder]]:
     """
     Load all three pipeline components once at startup.
@@ -447,27 +448,48 @@ def load_pipeline(
 
     coder = None
     if not skip_llm:
-        ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
-        logger.info("Initialising LLM coder (Stage 3, Ollama at %s)...", ollama_url)
-        coder = LLMCoder(
-            ollama_url=ollama_url,
-            confidence_threshold=CONFIDENCE_THRESHOLD,
-        )
-        # Quick connectivity verification (soft warning if Ollama is unreachable)
-        try:
-            import requests
-            r = requests.get(f"{ollama_url}/api/tags", timeout=5)
-            if r.status_code == 200:
-                models = [m["name"] for m in r.json().get("models", [])]
-                logger.info("Ollama reachable -- available models: %s", models)
-            else:
-                logger.warning("Ollama responded with unexpected status %d", r.status_code)
-        except Exception as exc:
+        if use_groq:
+            # WARNING: Groq sends narratives to an external API.
+            # Acceptable for benchmarking/capstone dev only -- NOT for production.
+            groq_api_key = os.getenv("GROQ_API_KEY")
+            if not groq_api_key:
+                logger.error(
+                    "--groq requested but GROQ_API_KEY is not set. "
+                    "Export GROQ_API_KEY=<key> and retry."
+                )
+                sys.exit(1)
             logger.warning(
-                "Cannot reach Ollama at %s (%s). "
-                "Stage 3 will fall back to CrossEncoder results when called.",
-                ollama_url, exc,
+                "=== GROQ BACKEND ACTIVE (EXPERIMENTAL) ==="
+                " Narratives will be sent to Groq's external API."
+                " NOT for production use. ==="
             )
+            coder = LLMCoder(
+                confidence_threshold=CONFIDENCE_THRESHOLD,
+                use_groq=True,
+                groq_api_key=groq_api_key,
+            )
+        else:
+            ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+            logger.info("Initialising LLM coder (Stage 3, Ollama at %s)...", ollama_url)
+            coder = LLMCoder(
+                ollama_url=ollama_url,
+                confidence_threshold=CONFIDENCE_THRESHOLD,
+            )
+            # Quick connectivity verification (soft warning if Ollama is unreachable)
+            try:
+                import requests
+                r = requests.get(f"{ollama_url}/api/tags", timeout=5)
+                if r.status_code == 200:
+                    models = [m["name"] for m in r.json().get("models", [])]
+                    logger.info("Ollama reachable -- available models: %s", models)
+                else:
+                    logger.warning("Ollama responded with unexpected status %d", r.status_code)
+            except Exception as exc:
+                logger.warning(
+                    "Cannot reach Ollama at %s (%s). "
+                    "Stage 3 will fall back to CrossEncoder results when called.",
+                    ollama_url, exc,
+                )
 
     return searcher, reranker, coder
 
@@ -695,6 +717,12 @@ Examples:
              "Useful for testing Stage 1+2, or when the Ollama tunnel is not open.",
     )
     parser.add_argument(
+        "--groq", action="store_true",
+        help="[EXPERIMENTAL] Use Groq API instead of Ollama for Stage 3. "
+             "Requires GROQ_API_KEY env var. "
+             "WARNING: sends narratives to external API -- capstone benchmarking only.",
+    )
+    parser.add_argument(
         "--verbose", action="store_true",
         help="Enable DEBUG-level logging (very verbose)",
     )
@@ -705,16 +733,20 @@ Examples:
 
     logger.info("=== SentinelAI Coding Worker starting ===")
     logger.info(
-        "Config: batch_size=%d | product_code=%s | limit=%s | once=%s | skip_llm=%s",
+        "Config: batch_size=%d | product_code=%s | limit=%s | once=%s | skip_llm=%s | groq=%s",
         args.batch_size,
         args.product_code or "ALL",
         args.limit or "none",
         args.once,
         args.skip_llm,
+        args.groq,
     )
 
     # Load all three pipeline components once at startup
-    searcher, reranker, coder = load_pipeline(skip_llm=args.skip_llm)
+    searcher, reranker, coder = load_pipeline(
+        skip_llm=args.skip_llm,
+        use_groq=args.groq,
+    )
 
     t_start = time.time()
     total = run_batch_loop(
