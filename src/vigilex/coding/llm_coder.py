@@ -109,7 +109,7 @@ def _build_user_prompt(narrative: str, candidates: list[RerankedResult]) -> str:
 
     Format:
         Adverse event narrative:
-        """the report text..."""
+        <the report text...>
 
         Candidate MedDRA PTs (ranked by relevance, best first):
           1. PT: Hypoglycaemia (code: 10020993) | SOC: Metabolism disorders | score: 8.45
