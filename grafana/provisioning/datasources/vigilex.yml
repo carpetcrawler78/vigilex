@@ -5,15 +5,12 @@ datasources:
     uid: vigilex-postgres-uid
     type: postgres
     url: postgres:5432
-    user: vigilex_readonly
+    database: vigilex
+    user: vigilex
     secureJsonData:
-      password: "$GF_POSTGRES_PASSWORD"
+      password: ${GF_POSTGRES_PASSWORD}
     jsonData:
-      database: vigilex
       sslmode: disable
-      maxOpenConns: 5
-      maxIdleConns: 2
-      connMaxLifetime: 14400
       postgresVersion: 1600
-      timescaledb: false
-    isD
+    isDefault: false
+    editable: true
