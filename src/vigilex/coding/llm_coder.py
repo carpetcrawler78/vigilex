@@ -58,7 +58,7 @@ OLLAMA_DEFAULT_URL = "http://localhost:11434"
 
 # The Ollama model to use. Must be pulled on the server first:
 #   ollama pull llama3.2
-OLLAMA_MODEL = "llama3.2"
+OLLAMA_MODEL = "llama3.2:3b"
 
 # The system prompt tells the LLM what role it should play and what rules to follow.
 # Key rules that improve reliability:
