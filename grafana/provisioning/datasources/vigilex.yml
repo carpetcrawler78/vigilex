@@ -2,6 +2,7 @@ apiVersion: 1
 
 datasources:
   - name: vigilex-postgres
+    uid: vigilex-postgres-uid
     type: postgres
     url: postgres:5432
     user: vigilex_readonly
@@ -15,5 +16,4 @@ datasources:
       connMaxLifetime: 14400
       postgresVersion: 1600
       timescaledb: false
-    isDefault: false
-    editable: false
+    isDefa
