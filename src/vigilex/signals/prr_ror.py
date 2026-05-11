@@ -43,7 +43,7 @@ import logging
 from datetime import date, datetime
 from typing import Optional
 
-from vigilex.db.connection import get_connection, get_cursor
+#from vigilex.db.connection import get_connection, get_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -247,6 +247,8 @@ def run_prr_ror(
     Returns:
         List of result dicts (all computed rows, regardless of is_signal).
     """
+ 
+ 
     if thresholds is None:
         thresholds = DEFAULT_THRESHOLDS
 
@@ -254,7 +256,8 @@ def run_prr_ror(
         "PRR/ROR: window %s to %s | thresholds: %s | dry_run=%s",
         start_date, end_date, thresholds, dry_run,
     )
-
+    
+    from vigilex.db.connection import get_connection, get_cursor  # lazy
     conn = get_connection()
     try:
         cur = get_cursor(conn)
