@@ -172,6 +172,7 @@ services:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?GRAFANA_PASSWORD required}
       GF_SERVER_ROOT_URL: http://localhost:3000
+      GF_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "0.0.0.0:3000:3000"   # public — add firewall rule
     networks:
@@ -201,5 +202,4 @@ services:
     volumes:
       - mlflow-data:/mlflow/artifacts
     depends_on:
-      postgres:
-        condition: service_healthy
+  
