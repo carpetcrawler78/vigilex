@@ -533,6 +533,8 @@ def run_batch_loop(
         Total number of reports successfully coded in this run.
     """
     total_coded = 0
+    total_pending_start: Optional[int] = None
+    t_run_start = time.time()
 
     while True:
         # Apply --limit: reduce batch size if we are close to the cap
@@ -564,6 +566,9 @@ def run_batch_loop(
                 conn.close()
                 time.sleep(DEFAULT_POLL_SECS)
                 continue
+
+            if total_pending_start is None:
+                total_pending_start = pending + total_coded
 
             reports = fetch_uncoded_reports(conn, effective_batch, product_code)
             logger.info(
@@ -605,6 +610,21 @@ def run_batch_loop(
                 "==> Batch done: %d coded / %d errors | Running total: %d",
                 batch_ok, batch_err, total_coded,
             )
+
+            # -- Progress summary with ETA ---------------------------------
+            if total_pending_start and total_pending_start > 0:
+                pct = total_coded / total_pending_start * 100
+                elapsed = time.time() - t_run_start
+                rate = total_coded / elapsed if elapsed > 0 else 0
+                remaining_records = total_pending_start - total_coded
+                eta_secs = remaining_records / rate if rate > 0 else 0
+                eta_h = int(eta_secs // 3600)
+                eta_m = int((eta_secs % 3600) // 60)
+                logger.info(
+                    ">>> PROGRESS: %d / %d (%.1f%%) | %.2f rec/min | ETA: %dh %02dm",
+                    total_coded, total_pending_start, pct,
+                    rate * 60, eta_h, eta_m,
+                )
 
         except Exception as exc:
             # Unexpected error outside the per-report loop (e.g. DB connection lost)
