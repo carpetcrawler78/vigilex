@@ -8,7 +8,7 @@ datasources:
     database: vigilex
     user: vigilex
     secureJsonData:
-      password: ${GF_POSTGRES_PASSWORD}
+      password: '${GF_POSTGRES_PASSWORD}'
     jsonData:
       sslmode: disable
       postgresVersion: 1600
