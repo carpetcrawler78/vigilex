@@ -2,15 +2,19 @@ apiVersion: 1
 
 datasources:
   - name: vigilex-postgres
-    uid: vigilex-postgres-uid
+    uid: vigilex_pg
     type: postgres
     url: postgres:5432
-    database: vigilex
-    user: vigilex
+    user: vigilex_readonly
     secureJsonData:
       password: '${GF_POSTGRES_PASSWORD}'
     jsonData:
+      database: vigilex
       sslmode: disable
       postgresVersion: 1600
-    isDefault: false
-    editable: true
+      maxOpenConns: 5
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+      timescaledb: false
+    isDefault: true
+    editable: false
