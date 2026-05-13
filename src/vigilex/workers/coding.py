@@ -57,11 +57,13 @@ import math
 import os
 import sys
 import time
+from collections import deque        # Rolling-Window fuer ntfy-Statistik
 from dataclasses import dataclass
 from typing import Optional
 
 import psycopg2
 import psycopg2.extras
+import requests                       # ntfy.sh Push-Notifications
 
 try:
     from dotenv import load_dotenv
@@ -102,6 +104,24 @@ CONFIDENCE_THRESHOLD = 0.5   # final_confidence < 0.5 -> flagged for human revie
 # Increment this (e.g. "pipeline_v2") when the pipeline components change,
 # so you can identify which version produced which results in the database.
 MODEL_VERSION = os.getenv("MODEL_VERSION", "pipeline_v1")
+
+# ---------------------------------------------------------------------------
+# Strict-Mode -- "fail-fast in dev, fail-soft in prod"
+# Bei VIGILEX_STRICT=true wird der Worker bei LLM-Fehler abgebrochen statt
+# stillschweigend in den Fallback-Pfad zu fallen. Konsistent mit
+# llm_coder.py STRICT_MODE. Siehe CLAUDE.md "Kritischer Befund 2026-05-13".
+# ---------------------------------------------------------------------------
+STRICT_MODE = os.environ.get("VIGILEX_STRICT", "false").lower() == "true"
+
+# ---------------------------------------------------------------------------
+# ntfy.sh Push-Notifications fuer Worker-Monitoring
+# Topic z.B. "sentinelai-cap-progress" -- Push-Notifications aufs Handy.
+# Alle NTFY_BATCH_SIZE Records eine Summary; Sonder-Alert bei Non-Konformitaet.
+# Leer = ntfy deaktiviert.
+# ---------------------------------------------------------------------------
+NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "")
+NTFY_BATCH_SIZE = int(os.environ.get("NTFY_BATCH_SIZE", "100"))
+NTFY_FALLBACK_THRESHOLD_PCT = 10    # in Prod-Mode: Alert wenn >10% Fallback in letzten N
 
 
 # ---------------------------------------------------------------------------
@@ -334,25 +354,47 @@ def code_report(
     if coder is not None:
         try:
             llm_result     = coder.code(narrative, reranked)
-            llm_confidence = llm_result.confidence
+            llm_confidence = llm_result.confidence    # float ODER None (Prod-Fallback)
             final_pt_code  = llm_result.pt_code
             final_pt_name  = llm_result.pt_name
             # soc_name comes from the LLM prompt which sourced it from Stage 2
             # but the LLM does not reliably echo it back -- keep Stage 2's soc_name
         except Exception as exc:
+            if STRICT_MODE:
+                # Strict: Bug nicht in Logs verstecken, Worker bricht ab.
+                # Siehe CLAUDE.md Befund 13.05 -- so haetten wir es frueher gemerkt.
+                logger.error(
+                    "STRICT MODE: Stage 3 raised for %s -- re-raising to abort worker.",
+                    report_key,
+                )
+                raise
+            # Prod-Mode: code() sollte normalerweise NICHT raisen (handhabt
+            # interne Fehler selbst). Falls doch eine unerwartete Exception
+            # durchschlaegt -> warnen und Stage-2-Pfad nehmen.
             logger.warning(
-                "Stage 3 LLM call failed for %s (%s) -- using Stage 2 top result",
+                "Stage 3 unexpected exception for %s (%s) -- using Stage 2 top result",
                 report_key, exc,
             )
-            # llm_confidence remains None -> confidence formula uses Stage 2 only
+            # llm_confidence remains None -> "skip-llm-Pfad" weiter unten
 
-    # -- Final confidence computation -----------------------------------------
-    if llm_confidence is not None:
-        # Weighted combination: LLM carries 70%, CrossEncoder carries 30%
-        final_confidence = 0.3 * ce_score_norm + 0.7 * llm_confidence
-    else:
-        # No LLM result -- use CrossEncoder confidence alone
+    # -- Final confidence computation -- drei-Zweig-Logik ---------------------
+    # Drei semantisch unterschiedliche Faelle:
+    #   A) coder is None (--skip-llm): bewusste Entscheidung, Stage 2 only ist Ziel
+    #      -> final = sigmoid(CE) ist korrekt
+    #   B) coder is not None aber llm_confidence is None: LLM-Fallback
+    #      (coder.code() hat None zurueckgegeben weil LLM ausfiel)
+    #      -> final = None (NULL in DB, konsistent: "kein Wert ermittelt")
+    #   C) llm_confidence is float: normaler LLM-Pfad
+    #      -> final = gewichtete Kombination
+    if coder is None:
+        # Fall A -- --skip-llm Mode
         final_confidence = ce_score_norm
+    elif llm_confidence is None:
+        # Fall B -- LLM-Fallback (echter Failure-Pfad)
+        final_confidence = None
+    else:
+        # Fall C -- normaler Pfad mit gewichteter Kombination
+        final_confidence = 0.3 * ce_score_norm + 0.7 * llm_confidence
 
     return {
         "mdr_report_key":    report_key,
@@ -362,7 +404,7 @@ def code_report(
         "vector_similarity": round(vector_sim, 6),
         "crossencoder_score": round(top_ce.crossencoder_score, 6),
         "llm_confidence":    round(llm_confidence, 6) if llm_confidence is not None else None,
-        "final_confidence":  round(final_confidence, 6),
+        "final_confidence":  round(final_confidence, 6) if final_confidence is not None else None,
         "model_version":     MODEL_VERSION,
     }
 
@@ -391,7 +433,7 @@ def _fallback_result(report_key: str, reason: str = "unknown") -> dict:
         "vector_similarity": None,
         "crossencoder_score": None,
         "llm_confidence":    None,
-        "final_confidence":  0.0,    # confidence=0 -> always flagged for review
+        "final_confidence":  None,   # NULL in DB -- konsistent mit "kein Wert ermittelt"
         "model_version":     MODEL_VERSION + "_fallback",
     }
 
@@ -469,29 +511,101 @@ def load_pipeline(
                 groq_api_key=groq_api_key,
             )
         else:
-            ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
-            logger.info("Initialising LLM coder (Stage 3, Ollama at %s)...", ollama_url)
+            # LLMCoder liest OLLAMA_BASE_URL selbst aus dem env.
+            # Wenn nicht gesetzt: RuntimeError (kein stiller localhost-Default mehr).
+            # Vorher hatte coding.py die env-var unter falschem Namen ("OLLAMA_URL")
+            # gelesen -- inkonsistent mit docker-compose.yml ("OLLAMA_BASE_URL").
+            # Das war Teil des Befunds vom 13.05.
+            ollama_url_for_log = os.environ.get("OLLAMA_BASE_URL", "<not set -- will raise>")
+            logger.info("Initialising LLM coder (Stage 3, Ollama at %s)...", ollama_url_for_log)
             coder = LLMCoder(
-                ollama_url=ollama_url,
                 confidence_threshold=CONFIDENCE_THRESHOLD,
             )
-            # Quick connectivity verification (soft warning if Ollama is unreachable)
-            try:
-                import requests
-                r = requests.get(f"{ollama_url}/api/tags", timeout=5)
-                if r.status_code == 200:
-                    models = [m["name"] for m in r.json().get("models", [])]
-                    logger.info("Ollama reachable -- available models: %s", models)
-                else:
-                    logger.warning("Ollama responded with unexpected status %d", r.status_code)
-            except Exception as exc:
-                logger.warning(
-                    "Cannot reach Ollama at %s (%s). "
-                    "Stage 3 will fall back to CrossEncoder results when called.",
-                    ollama_url, exc,
-                )
+            # Connectivity verification passiert in LLMCoder._check_connection().
+            # Im Strict-Mode raised das hart -- Worker startet nicht bei kaputtem Setup.
 
     return searcher, reranker, coder
+
+
+def notify_progress(
+    total_coded: int,
+    rate_per_min: float,
+    rolling: list[dict],
+) -> None:
+    """
+    Push progress summary to ntfy.sh after every NTFY_BATCH_SIZE records.
+
+    Sendet eine Zusammenfassung der letzten N Records aufs Handy:
+      - Cumulative count
+      - Throughput (rec/min)
+      - Fallback-Quote in der letzten N
+      - Mean/Median der echten LLM-Confidence (None ueberspringen)
+      - Sonder-Alert wenn non-konform:
+          * Strict-Mode: jeder Fallback > 0 ist Violation
+          * Prod-Mode: >NTFY_FALLBACK_THRESHOLD_PCT in letzter N
+
+    No-op wenn NTFY_TOPIC nicht gesetzt ist.
+    """
+    if not NTFY_TOPIC:
+        return  # ntfy deaktiviert -- nichts tun
+
+    if not rolling:
+        return  # keine Daten zum Reporten
+
+    # Statistik ueber rolling-window berechnen
+    n_total = len(rolling)
+    n_fallback = sum(1 for r in rolling if r["is_fallback"])
+    n_real = n_total - n_fallback
+    fallback_pct = (n_fallback / n_total * 100) if n_total > 0 else 0.0
+
+    # Mean/Median nur ueber echte LLM-Confidence (None ueberspringen)
+    real_conf = [
+        r["llm_confidence"] for r in rolling
+        if r["llm_confidence"] is not None
+    ]
+    if real_conf:
+        mean_conf = sum(real_conf) / len(real_conf)
+        sorted_conf = sorted(real_conf)
+        median_conf = sorted_conf[len(sorted_conf) // 2]
+        conf_str = f"mean {mean_conf:.2f} | median {median_conf:.2f}"
+    else:
+        conf_str = "no real LLM data"
+
+    # Non-Konform-Check -- Sonder-Alert-Prefix
+    if STRICT_MODE and n_fallback > 0:
+        # Sollte im Strict-Mode unmoeglich sein (Worker wuerde abbrechen)
+        prefix = "[STRICT VIOLATION] "
+        priority = "urgent"
+    elif fallback_pct > NTFY_FALLBACK_THRESHOLD_PCT:
+        prefix = f"[HIGH FALLBACK {fallback_pct:.0f}%] "
+        priority = "high"
+    else:
+        prefix = ""
+        priority = "default"
+
+    msg = (
+        f"{prefix}"
+        f"Total: {total_coded} | "
+        f"{rate_per_min:.1f} rec/min\n"
+        f"Last {n_total}: {n_real} real / {n_fallback} fallback ({fallback_pct:.0f}%)\n"
+        f"{conf_str}"
+    )
+
+    # Push an ntfy.sh -- 5s Timeout, kein blocking falls ntfy nicht erreichbar
+    try:
+        requests.post(
+            f"https://ntfy.sh/{NTFY_TOPIC}",
+            data=msg.encode("utf-8"),
+            headers={
+                "Title": f"SentinelAI Coding @ {total_coded}",
+                "Priority": priority,
+                "Tags": "robot,chart_with_upwards_trend",
+            },
+            timeout=5,
+        )
+    except Exception as exc:
+        # ntfy-Fehler darf den Worker nicht stoppen -- nur loggen
+        logger.warning("ntfy push failed: %s", exc)
 
 
 def _update_searcher_conn(searcher: HybridSearcher, conn) -> None:
@@ -558,6 +672,11 @@ def run_batch_loop(
     total_pending_start: Optional[int] = None
     t_run_start = time.time()
 
+    # Rolling-Window fuer ntfy-Statistik -- letzte N Records
+    # Speichert pro Record: {is_fallback: bool, llm_confidence: Optional[float]}
+    rolling: deque = deque(maxlen=NTFY_BATCH_SIZE)
+    last_notify_at = 0    # letzter Notify-Punkt (in total_coded-Einheiten)
+
     while True:
         # Apply --limit: reduce batch size if we are close to the cap
         effective_batch = batch_size
@@ -611,21 +730,54 @@ def run_batch_loop(
                     conn.commit()  # commit per report for error isolation
                     batch_ok += 1
                     ms = (time.time() - t0) * 1000
+                    # final_confidence kann None sein (Fallback-Pfad mit NULL-Strategie)
+                    fc = result.get("final_confidence")
+                    fc_str = f"{fc:.3f}" if fc is not None else "NULL "
                     logger.info(
-                        "[OK] %-30s  PT=%-40s  conf=%.3f  %.0fms",
+                        "[OK] %-30s  PT=%-40s  conf=%s  %.0fms",
                         rk,
                         result.get("pt_name") or "N/A",
-                        result.get("final_confidence", 0.0),
+                        fc_str,
                         ms,
                     )
+
+                    # -- Rolling-Window fuer ntfy ----------------------------
+                    # is_fallback: LLM wurde befragt, hat aber None zurueckgegeben.
+                    # NICHT-Fallback: skip-llm (coder is None) ODER echter LLM-Wert.
+                    llm_conf_val = result.get("llm_confidence")
+                    is_fallback = (coder is not None and llm_conf_val is None)
+                    rolling.append({
+                        "is_fallback": is_fallback,
+                        "llm_confidence": llm_conf_val,
+                    })
+
+                    # -- Notify alle NTFY_BATCH_SIZE Records -----------------
+                    if (total_coded + batch_ok) - last_notify_at >= NTFY_BATCH_SIZE:
+                        elapsed_now = time.time() - t_run_start
+                        rate_now = ((total_coded + batch_ok) / elapsed_now * 60
+                                    if elapsed_now > 0 else 0.0)
+                        notify_progress(
+                            total_coded=total_coded + batch_ok,
+                            rate_per_min=rate_now,
+                            rolling=list(rolling),
+                        )
+                        last_notify_at = total_coded + batch_ok
                 except Exception as exc:
-                    # Roll back this report's transaction, log the error, continue
+                    # Roll back this report's transaction, log the error
                     try:
                         conn.rollback()
                     except Exception:
                         pass
                     batch_err += 1
                     logger.error("[ERR] %s: %s", rk, exc, exc_info=False)
+                    if STRICT_MODE:
+                        # Strict: Worker bricht ab beim ersten Fehler.
+                        # Verbindung sauber schliessen, dann raise nach oben.
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+                        raise
 
             total_coded += batch_ok
             logger.info(
@@ -655,6 +807,9 @@ def run_batch_loop(
                 conn.rollback()
             except Exception:
                 pass
+            if STRICT_MODE:
+                # Strict: auch unerwartete Errors duerfen nicht still bleiben
+                raise
 
         finally:
             # Always close the connection, whether the batch succeeded or failed
@@ -665,6 +820,16 @@ def run_batch_loop(
 
         if once:
             break  # exit after first successful batch in --once mode
+
+    # Final ntfy-Push am Ende -- gibt es noch ungesendete Records seit dem letzten Notify?
+    if total_coded > last_notify_at and rolling:
+        elapsed_final = time.time() - t_run_start
+        rate_final = (total_coded / elapsed_final * 60) if elapsed_final > 0 else 0.0
+        notify_progress(
+            total_coded=total_coded,
+            rate_per_min=rate_final,
+            rolling=list(rolling),
+        )
 
     return total_coded
 
@@ -740,6 +905,14 @@ Examples:
         args.once,
         args.skip_llm,
         args.groq,
+    )
+    # Mode-Status sichtbar im Startup-Log -- so siehst du sofort ob Strict-Mode
+    # aktiv ist und ob ntfy-Pushes rausgehen werden.
+    logger.info(
+        "Mode: STRICT_MODE=%s | NTFY_TOPIC=%s | NTFY_BATCH_SIZE=%d",
+        STRICT_MODE,
+        NTFY_TOPIC if NTFY_TOPIC else "<disabled>",
+        NTFY_BATCH_SIZE,
     )
 
     # Load all three pipeline components once at startup

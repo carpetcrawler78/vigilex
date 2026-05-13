@@ -39,6 +39,7 @@ This module was explored in Notebook 07_meddra_llm_coding.ipynb.
 
 import json
 import re
+import os
 import sys
 from dataclasses import dataclass
 from typing import Optional
@@ -51,14 +52,25 @@ except ImportError:
 from vigilex.coding.reranker import RerankedResult
 
 
-# Default Ollama server URL. When running locally with an SSH tunnel:
-#   ssh -L 11434:localhost:11434 cap@46.225.109.99
-# the server at localhost:11434 forwards to the Hetzner server's Ollama.
-OLLAMA_DEFAULT_URL = "http://localhost:11434"
+# Ollama URL ist NICHT mehr als Modul-Konstante gefuehrt.
+# Aufloesung passiert in LLMCoder.__init__ (Argument oder env-var, sonst raise).
+# Grund: hardcoded "localhost:11434" hat am 12.05 24h Massen-Fallback erzeugt,
+# weil im Docker-Container localhost nicht auf den Host zeigt.
+# Siehe CLAUDE.md "Kritischer Befund 2026-05-13".
 
 # The Ollama model to use. Must be pulled on the server first:
 #   ollama pull llama3.2
+# Bleibt hardcoded -- Architektur-Entscheidung (CX33 RAM-Constraint), nicht Deployment-Config.
 OLLAMA_MODEL = "llama3.2:3b"
+
+# ---------------------------------------------------------------------------
+# Strict-Mode -- "fail-fast in dev, fail-soft in prod"
+# Bei VIGILEX_STRICT=true werden Fehler hart durchgereicht statt
+# stillschweigend zu Fallback zu wechseln. Wichtig fuer Development:
+# Bugs werden sichtbar, nicht von der graceful-degradation versteckt.
+# Production (Default false): Fallback bleibt aktiv, kein Datenverlust.
+# ---------------------------------------------------------------------------
+STRICT_MODE = os.environ.get("VIGILEX_STRICT", "false").lower() == "true"
 
 # ---------------------------------------------------------------------------
 # Groq backend (EXPERIMENTAL -- NOT FOR PRODUCTION)
@@ -155,18 +167,20 @@ class CodingResult:
         pt_code:      MedDRA numeric code for the selected Preferred Term
         pt_name:      Human-readable PT name, e.g. "Hypoglycaemia"
         soc_name:     System Organ Class, e.g. "Metabolism and nutrition disorders"
-        confidence:   0.0-1.0 confidence score (LLM's self-assessment)
-        rationale:    1-2 sentence explanation from the LLM
-        raw_response: Full LLM output string (stored for debugging)
-        flagged:      True if confidence < threshold (signals need for human review)
+        confidence:   0.0-1.0 confidence score (LLM's self-assessment),
+                      or None when LLM is in fallback mode (no value ascertained).
+                      Maps to SQL NULL in processed.coding_results.llm_confidence.
+        rationale:    1-2 sentence explanation from the LLM (or fallback note)
+        raw_response: Full LLM output string (or error message in fallback)
+        flagged:      True if confidence < threshold OR fallback occurred
     """
     pt_code:      int
     pt_name:      str
     soc_name:     str
-    confidence:   float
+    confidence:   Optional[float]    # None on fallback -> NULL in DB
     rationale:    str
     raw_response: str
-    flagged:      bool = False  # set to True if confidence < CONFIDENCE_THRESHOLD
+    flagged:      bool = False  # set to True if confidence < CONFIDENCE_THRESHOLD or fallback
 
 
 # ---------------------------------------------------------------------------
@@ -194,19 +208,37 @@ class LLMCoder:
 
     def __init__(
         self,
-        ollama_url: str = OLLAMA_DEFAULT_URL,
+        ollama_url: Optional[str] = None,    # vorher hardcoded Default, jetzt None
         model: str = OLLAMA_MODEL,
         confidence_threshold: float = 0.5,
         temperature: float = 0.1,
         use_groq: bool = False,
         groq_api_key: Optional[str] = None,
     ):
-        self.ollama_url = ollama_url.rstrip("/")
+        # Ollama-URL-Aufloesung (nur wenn nicht im Groq-Modus):
+        #   1. Explizit uebergebenes ollama_url Argument hat Vorrang
+        #   2. OLLAMA_BASE_URL aus Environment-Variable
+        #   3. RuntimeError -- keine stillen Defaults
+        # Im Groq-Modus brauchen wir keine Ollama-URL (nur den API-Key).
+        if not use_groq:
+            if ollama_url is None:
+                ollama_url = os.environ.get("OLLAMA_BASE_URL")
+            if not ollama_url:
+                raise RuntimeError(
+                    "LLMCoder needs ollama_url -- pass it explicitly OR "
+                    "set OLLAMA_BASE_URL in the environment. "
+                    "No silent localhost default (see CLAUDE.md Befund 2026-05-13)."
+                )
+            self.ollama_url = ollama_url.rstrip("/")
+        else:
+            # Groq-Modus: Ollama-URL irrelevant
+            self.ollama_url = ""
+
         self.model = model
         self.confidence_threshold = confidence_threshold
         self.temperature = temperature
         # Groq backend (experimental, external API -- see WARNING above)
-        self.use_groq    = use_groq
+        self.use_groq = use_groq
         self.groq_api_key = groq_api_key
         # Verify the backend is reachable when the coder is initialised
         self._check_connection()
@@ -215,21 +247,27 @@ class LLMCoder:
         """
         Verify that the configured backend is reachable.
 
-        Groq: checks that GROQ_API_KEY is set (no network call at init).
-        Ollama: checks that the server is reachable and the model is loaded.
+        In STRICT_MODE: any problem raises RuntimeError -- worker will not start.
+        In production mode: warnings only, worker continues (graceful degradation).
 
-        Soft check -- warnings only, no exceptions raised.
+        This is the first error-trap: catches config problems before the
+        coding loop hides them in fallback records.
         """
+        # Groq path
         if self.use_groq:
             if not self.groq_api_key:
-                print(
-                    "WARNING: --groq requested but GROQ_API_KEY is not set. "
+                msg = (
+                    "--groq requested but GROQ_API_KEY is not set. "
                     "Export GROQ_API_KEY=<your_key> before starting the worker."
                 )
+                if STRICT_MODE:
+                    raise RuntimeError(msg)
+                print(f"WARNING: {msg}")
             else:
                 print(f"Groq backend active (model: {GROQ_MODEL}). "
                       "WARNING: narratives will be sent to external API.")
             return
+
         # Ollama path
         try:
             r = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
@@ -237,16 +275,23 @@ class LLMCoder:
             models = [m["name"] for m in r.json().get("models", [])]
             available = any(self.model in m for m in models)
             if not available:
-                print(
-                    f"WARNING: model '{self.model}' not found in Ollama. "
+                msg = (
+                    f"model '{self.model}' not found in Ollama at {self.ollama_url}. "
                     f"Available models: {models}. "
                     f"Run 'ollama pull {self.model}' on the server."
                 )
+                if STRICT_MODE:
+                    raise RuntimeError(msg)
+                print(f"WARNING: {msg}")
         except requests.RequestException as e:
-            print(
-                f"WARNING: Cannot reach Ollama at {self.ollama_url}: {e}. "
-                f"Stage 3 will fall back to CrossEncoder results if the server remains unreachable."
+            msg = (
+                f"Cannot reach Ollama at {self.ollama_url}: {e}. "
+                f"Stage 3 would fall back to CrossEncoder results."
             )
+            if STRICT_MODE:
+                # Dev: harter Abbruch -- Container Crashloop, sichtbar in docker ps
+                raise RuntimeError(msg) from e
+            print(f"WARNING: {msg}")
 
     def _call_ollama(self, user_prompt: str) -> str:
         """
@@ -416,15 +461,32 @@ class LLMCoder:
                 raw = self._call_ollama(user_prompt)
             parsed = self._parse_response(raw, candidates)
         except Exception as e:
-            # Graceful fallback: use the top CrossEncoder result with a low confidence.
-            # flagged=True ensures this case appears in the human review queue.
+            if STRICT_MODE:
+                # Dev: keine stillen Fallbacks -- Worker bricht ab.
+                # So sehen wir Bugs sofort statt nach 24h im DB-Spike (siehe Befund 13.05).
+                # Diagnose-Info VOR dem raise, damit man sieht welcher Record es war.
+                top = candidates[0]
+                print(
+                    f"STRICT MODE: LLM coding failed -- aborting worker.\n"
+                    f"  top CE candidate: {top.pt_name} (code {top.pt_code}, "
+                    f"score {top.crossencoder_score:.2f})\n"
+                    f"  error: {type(e).__name__}: {e}"
+                )
+                raise
+            # Production mode: graceful fallback.
+            # confidence=None landet in der DB als NULL -- semantisch korrekt
+            # ("LLM-Antwort nicht ermittelt"). Aggregations-Funktionen (AVG, MEAN)
+            # ueberspringen NULL automatisch -- kein Bias.
+            # flagged=True ist zusaetzliche Code-Wahrheit; confidence IS NULL ist
+            # die DB-Wahrheit auch ohne flagged-Spalte (Tech-Debt: flagged
+            # wird aktuell nicht persistiert).
             print(f"LLM coding failed ({e}). Falling back to top CrossEncoder candidate.")
             top = candidates[0]
             return CodingResult(
                 pt_code      = top.pt_code,
                 pt_name      = top.pt_name,
                 soc_name     = top.soc_name,
-                confidence   = 0.3,    # low but non-zero fallback confidence
+                confidence   = None,    # NULL in DB -- LLM ist ausgefallen
                 rationale    = f"LLM fallback -- using CrossEncoder top result. Error: {e}",
                 raw_response = str(e),
                 flagged      = True,   # always flag LLM fallback cases for human review

@@ -188,7 +188,9 @@ def test_llm(reranked, verbose):
 
     from vigilex.coding.llm_coder import LLMCoder
 
-    ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+    # env-var-Name auf OLLAMA_BASE_URL korrigiert (war OLLAMA_URL --
+    # inkonsistent mit docker-compose.yml und llm_coder.py).
+    ollama_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     print(f"  {INFO}  Ollama URL: {ollama_url}")
     print(f"  {INFO}  Sending request (may take 5-20s on CPU)...")
 
