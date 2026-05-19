@@ -20,3 +20,4 @@ notebooks/data/
 htmlcov/*.log
 coding_*.log
 *.log
+*.log
