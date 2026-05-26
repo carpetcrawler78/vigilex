@@ -53,10 +53,9 @@ except ImportError:
     sys.exit("psycopg2-binary not installed.")
 
 try:
-    import torch
-    from transformers import AutoTokenizer, AutoModel
+    from sentence_transformers import SentenceTransformer
 except ImportError:
-    sys.exit("transformers/torch not installed.")
+    sys.exit("sentence-transformers not installed. Run: pip3 install sentence-transformers")
 
 
 # ---------------------------------------------------------------------------
@@ -72,15 +71,14 @@ RRF_K        = 60
 # terminology that often differs from the colloquial language in MAUDE narratives.
 RRF_W_BM25   = 0.4
 
-# Vector search gets more weight because PubMedBERT captures semantic meaning
-# across vocabulary differences.
+# Vector search gets more weight because all-mpnet-base-v2 captures semantic meaning
+# across vocabulary differences better than lexical matching alone.
 RRF_W_VECTOR = 0.6
 
-# The PubMedBERT model (same as used in embed_meddra_terms.py for indexing).
-# Using the same model for both indexing and querying is essential for correctness --
-# if you encode the index with model A and queries with model B, the vectors live
-# in different spaces and similarity becomes meaningless.
-MODEL_NAME = "microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract"
+# all-mpnet-base-v2: chosen over PubMedBERT after bench 2026-05-26 (R@5: 0.25 vs 0.0).
+# Must match the model used in embed_meddra_terms_v2.py -- query and index must share
+# the same embedding space.
+MODEL_NAME = "sentence-transformers/all-mpnet-base-v2"
 
 
 # ---------------------------------------------------------------------------
@@ -112,56 +110,28 @@ class SearchResult:
 
 class EmbeddingModel:
     """
-    Lightweight wrapper around PubMedBERT for encoding query texts at search time.
+    Wrapper around all-mpnet-base-v2 (SentenceTransformer) for query encoding.
 
-    Why a separate class from the batch embedding script?
-        embed_meddra_terms.py is a one-time batch job that encodes 27k PT names.
-        EmbeddingModel is designed for online use: it encodes one query string
-        (the MAUDE narrative excerpt) every time a search is performed.
+    Replaces the previous PubMedBERT implementation (embed_meddra_terms.py).
+    Bench 2026-05-26 showed all-mpnet-base-v2 + pt_only achieves R@5=0.25 vs
+    PubMedBERT R@5=0.0 on the same production index.
 
-    The same model is used for both, ensuring the query vector and index vectors
-    live in the same embedding space.
+    Must use the same model as embed_meddra_terms_v2.py -- query and index
+    vectors must share the same embedding space.
     """
 
     def __init__(self, model_name: str = MODEL_NAME):
-        # Automatically use GPU if available; CPU is fine for single-query encoding
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name).to(self.device)
-        self.model.eval()  # eval mode: no dropout, consistent results
+        self._model = SentenceTransformer(model_name)
 
     def encode(self, text: str) -> list[float]:
-        """
-        Encode a single text string into a normalised 768-dimensional vector.
-
-        The vector can then be compared against the stored PT embeddings using
-        cosine similarity: cos(query, PT) = dot(query, PT) (for unit vectors).
-
-        Args:
-            text: the query string (typically the first sentence of a MAUDE narrative)
-
-        Returns:
-            List of 768 floats (unit vector).
-        """
-        encoded = self.tokenizer(
+        """Encode text into a normalised 768-dim vector (L2 unit length)."""
+        # normalize_embeddings=True: <=> works without it, but L2 normalization
+        # makes cosine distance more robust and consistent -- good practice,
+        # not a hard requirement from pgvector.
+        return self._model.encode(
             text,
-            padding=True,
-            truncation=True,
-            max_length=128,  # longer than the PT embedding max (64) to capture full sentences
-            return_tensors="pt"
-        ).to(self.device)
-
-        with torch.no_grad():
-            output = self.model(**encoded)
-
-        # Mean pooling: average over all token embeddings (weighted by attention mask)
-        token_emb = output.last_hidden_state
-        mask = encoded["attention_mask"].unsqueeze(-1).expand(token_emb.size()).float()
-        pooled = (token_emb * mask).sum(1) / mask.sum(1).clamp(min=1e-9)
-
-        # L2 normalise to unit length (required for cosine similarity with pgvector)
-        normalized = torch.nn.functional.normalize(pooled, p=2, dim=1)
-        return normalized[0].cpu().tolist()
+            normalize_embeddings=True,
+        ).tolist()
 
 
 # ---------------------------------------------------------------------------
@@ -287,48 +257,36 @@ class HybridSearcher:
     # Vector arm: semantic search via pgvector cosine similarity
     # ------------------------------------------------------------------
 
-    def _vector_search(self, query_embedding: list[float]) -> list[dict]:
+    def _vector_search(self, query_embedding: list[float], limit: int = 0) -> list[dict]:
         """
         Retrieve top candidates by cosine similarity to the query embedding.
 
-        How does pgvector work?
-            pgvector is a PostgreSQL extension that adds a VECTOR data type and
-            similarity operators. The <=> operator computes COSINE DISTANCE
-            (= 1 - cosine_similarity). Lower distance = more similar.
+        Uses embedding_mpnet (all-mpnet-base-v2, 768-dim) and idx_meddra_mpnet_ivfflat.
+        Called twice per search() invocation (query fusion): once with first_sentence,
+        once with full_text_truncated. Results are merged and deduped before RRF fusion.
 
-            We convert to similarity for display: 1 - (pt_embedding <=> query).
-
-        What is IVFFlat?
-            Without an index, pgvector must compare the query against all 27,361
-            PT embeddings -- slow but exact. IVFFlat (Inverted File with Flat
-            quantisation) creates clusters (lists=100) of similar vectors and
-            only searches the nearest clusters (probes=100).
-
-            With probes=100 on lists=100, we search ALL clusters (exact search).
-            We could lower probes (e.g. to 10) for faster approximate search
-            once the index quality is validated in production.
-
-        Returns rows sorted by cosine similarity descending (most similar first).
+        Args:
+            query_embedding: L2-normalised 768-dim vector from EmbeddingModel.encode().
+            limit: max rows to return. Defaults to self.candidate_pool if 0.
         """
+        n = limit if limit > 0 else self.candidate_pool
         sql = """
             SELECT
                 pt_code,
                 pt_name,
                 soc_name,
-                1 - (pt_embedding <=> %(embedding)s::vector) AS cosine_sim
+                1 - (embedding_mpnet <=> %(embedding)s::vector) AS cosine_sim
             FROM processed.meddra_terms
-            WHERE pt_embedding IS NOT NULL
-            ORDER BY pt_embedding <=> %(embedding)s::vector  -- ascending distance = descending similarity
+            WHERE embedding_mpnet IS NOT NULL
+            ORDER BY embedding_mpnet <=> %(embedding)s::vector
             LIMIT %(limit)s
         """
         with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            # SET ivfflat.probes controls how many clusters are searched.
-            # 100 = all clusters = exact results (slower but correct for our dataset size)
+            # Session-level setting: search all 100 IVFFlat clusters (exact retrieval).
+            # Lower probes (e.g. 10) would be faster but approximate -- keep at 100
+            # until production quality is validated.
             cur.execute("SET ivfflat.probes = 100")
-            cur.execute(sql, {
-                "embedding": str(query_embedding),
-                "limit": self.candidate_pool
-            })
+            cur.execute(sql, {"embedding": str(query_embedding), "limit": n})
             return cur.fetchall()
 
     # ------------------------------------------------------------------
@@ -438,14 +396,30 @@ class HybridSearcher:
         Returns:
             List of SearchResult objects sorted by RRF score descending.
         """
-        # Extract the first sentence for the vector arm embedding
-        first_sentence = query.split(".")[0].strip()
-        query_text_for_embedding = first_sentence if first_sentence else query
-        query_embedding = self.model.encode(query_text_for_embedding)
+        # Query Fusion: two complementary query representations for the vector arm.
+        # Bench 2026-05-26 showed these are complementary:
+        #   first_sentence -> better precision at top ranks (R@1/R@5)
+        #   full_text_truncated -> better coverage at depth (R@100)
+        # Running both and unioning candidates captures the strengths of each.
+        q1 = query.split(".")[0].strip() or query   # first sentence
+        q2 = query[:512]                             # truncated full text
 
-        # Run both retrieval arms independently (they do not depend on each other)
-        bm25_results   = self._bm25_search(query)
-        vector_results = self._vector_search(query_embedding)
+        emb1 = self.model.encode(q1)
+        emb2 = self.model.encode(q2)
 
-        # Fuse and return the top_k results
+        # Fetch top-50 from each query (union gives up to 100 unique candidates)
+        c1 = self._vector_search(emb1, limit=50)
+        c2 = self._vector_search(emb2, limit=50)
+
+        # Deduplicate by pt_code, keeping the row with the higher cosine_sim
+        seen: dict = {}
+        for row in c1 + c2:
+            code = row["pt_code"]
+            if code not in seen or row["cosine_sim"] > seen[code]["cosine_sim"]:
+                seen[code] = row
+        vector_results = sorted(seen.values(), key=lambda x: x["cosine_sim"], reverse=True)
+
+        # BM25 arm: unchanged
+        bm25_results = self._bm25_search(query)
+
         return self._rrf_fuse(bm25_results, vector_results, top_k)
