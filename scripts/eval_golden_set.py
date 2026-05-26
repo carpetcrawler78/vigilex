@@ -23,8 +23,15 @@ Usage on Hetzner:
     # Stage 1+2+3 with llama3.2:3b
     python scripts/eval_golden_set.py --stage3-model llama3.2:3b
 
-    # Stage 1+2+3 with qwen2.5:7b (Task #4 comparison)
+    # Stage 1+2+3 with qwen2.5:7b (comparison run)
     python scripts/eval_golden_set.py --stage3-model qwen2.5:7b --run-name qwen25_7b
+
+    # Groq reference run (throughput benchmark only -- production-excluded)
+    # WARNING: narratives are sent to Groq external API.
+    # GDPR Art. 44 (third-country transfer) + Art. 9 (health data).
+    # Do NOT run with real patient data.
+    export GROQ_API_KEY=<your_key>
+    python scripts/eval_golden_set.py --groq-reference --run-name groq_lm31_8b
 
     # Custom eval set or tracking URI
     python scripts/eval_golden_set.py \
@@ -208,29 +215,53 @@ def evaluate(args):
 
     # Optional Stage 3
     llm_coder = None
-    if args.stage3_model:
+    groq_reference = False
+    stage3_model_label = "none"
+
+    if args.groq_reference:
+        # Groq branch: external API, reference-only, production-excluded
+        LLMCoder = _try_import_llm_coder()
+        if LLMCoder is None:
+            print("WARNING: Could not import LLMCoder -- skipping Groq reference run")
+        else:
+            groq_key = os.environ.get("GROQ_API_KEY")
+            if not groq_key:
+                sys.exit("GROQ_API_KEY not set. Export it before running with --groq-reference.")
+            print("WARNING: Groq backend sends narratives to external API.")
+            print("         This run is for reference only. Never use in production.")
+            llm_coder = LLMCoder(use_groq=True, groq_api_key=groq_key)
+            groq_reference = True
+            stage3_model_label = "groq:llama-3.1-8b-instant"
+            print("LLMCoder ready: Groq llama-3.1-8b-instant (reference, production-excluded)")
+
+    elif args.stage3_model:
         LLMCoder = _try_import_llm_coder()
         if LLMCoder is None:
             print("WARNING: Could not import LLMCoder -- skipping Stage 3")
         else:
             ollama_url = args.ollama_url or os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
             llm_coder = LLMCoder(model=args.stage3_model, ollama_url=ollama_url)
+            stage3_model_label = args.stage3_model
             print(f"LLMCoder ready: {args.stage3_model} @ {ollama_url}")
 
     # -- MLflow run ---------------------------------------------------------
-    run_name = args.run_name or (
-        f"eval_{args.stage3_model.replace(':', '_')}" if args.stage3_model
-        else "eval_stage1_2_only"
-    )
+    if groq_reference:
+        base_name = args.run_name or "groq_lm31_8b"
+        run_name = base_name + "_groq_ref"
+    else:
+        run_name = args.run_name or (
+            f"eval_{args.stage3_model.replace(':', '_')}" if args.stage3_model
+            else "eval_stage1_2_only"
+        )
 
     with mlflow.start_run(run_name=run_name):
         # Log parameters
         mlflow.log_params({
             "eval_set":         eval_path.name,
             "n_cases":          len(cases),
-            "stage1_model": "all-mpnet-base-v2",
+            "stage1_model":     "all-mpnet-base-v2",
             "stage2_model":     "cross-encoder/ms-marco-MiniLM-L-6-v2",
-            "stage3_model":     args.stage3_model or "none",
+            "stage3_model":     stage3_model_label,
             "rrf_w_bm25":       0.4,
             "rrf_w_vector":     0.6,
             "rrf_k":            RRF_K,
@@ -238,6 +269,10 @@ def evaluate(args):
             "top_k_stage2":     args.top_k_stage2,
             "candidate_pool":   args.candidate_pool,
         })
+        if groq_reference:
+            mlflow.set_tag("backend", "groq_reference")
+            mlflow.set_tag("production_eligible", "false")
+            mlflow.set_tag("exclusion_reason", "GDPR_Art44_Art9_external_api")
 
         # -- Eval loop ------------------------------------------------------
         results = []
@@ -372,6 +407,10 @@ def parse_args():
                    help="MLflow tracking URI (default: $MLFLOW_TRACKING_URI or http://localhost:5000)")
     p.add_argument("--db-url",        default=None,
                    help="PostgreSQL URL (default: $DATABASE_URL)")
+    p.add_argument("--groq-reference", action="store_true", default=False,
+                   help="Use Groq llama-3.1-8b-instant as Stage 3 (reference only, "
+                        "production-excluded: GDPR Art.44 + Art.9). "
+                        "Requires GROQ_API_KEY env var.")
     p.add_argument("--ollama-url",    default=None,
                    help="Ollama base URL (default: $OLLAMA_BASE_URL or http://localhost:11434)")
     p.add_argument("--top-k-stage1",  type=int, default=20,
