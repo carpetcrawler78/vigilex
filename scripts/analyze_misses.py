@@ -49,12 +49,12 @@ ACCEPTABLE = {
     # BG 250+, cannula dislodged -- BG increase plausible
     "3004464228-2024-27443": {10005557},   # Blood glucose increased
     # Infusion site bleeding -- haemorrhage variants plausible
-    "3004464228-2024-04816": {10022034, 10055322},  # Infusion site haemorrhage, Medical device site haemorrhage
+    "3004464228-2024-04816": {10065464},  # Infusion site haemorrhage (verified 2026-05-26)
     # No-delivery + hemorrhage report
-    "2032227-2024-227041":   {10022034, 10055322},  # Infusion site haemorrhage, Medical device site haemorrhage
+    "2032227-2024-227041":   {10065464},  # Infusion site haemorrhage (verified 2026-05-26)
     # Skin irritation / allergic to adhesive -- dermatitis variants plausible
-    "3004464228-2024-04262": {10061519, 10040914},  # Medical device site dermatitis, Skin reaction
-    "3004464228-2024-29565": {10061519, 10040880},  # Medical device site dermatitis, Skin irritation
+    "3004464228-2024-04262": {10075572, 10040914},  # Medical device site dermatitis, Skin reaction
+    "3004464228-2024-29565": {10075572, 10040880},  # Medical device site dermatitis, Skin irritation
 }
 
 GOLDEN_SET = "data/eval/golden_set_v1.jsonl"
