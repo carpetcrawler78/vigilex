@@ -62,6 +62,9 @@ try:
 except ImportError:
     sys.exit("psycopg2-binary not installed.")
 
+import tempfile
+import pandas as pd
+
 from vigilex.coding.hybrid_search import EmbeddingModel, HybridSearcher, RRF_K
 from vigilex.coding.reranker import CrossEncoderReranker
 
@@ -274,10 +277,16 @@ def evaluate(args):
             mlflow.set_tag("production_eligible", "false")
             mlflow.set_tag("exclusion_reason", "GDPR_Art44_Art9_external_api")
 
+        if run_name.startswith("topk_sweep"):
+            mlflow.set_tag("experiment_group", "topk_sweep")
+
         # -- Eval loop ------------------------------------------------------
         results = []
         errors  = []
         t_start = time.time()
+        stage1_total_s = 0.0
+        stage2_total_s = 0.0
+        stage3_total_s = 0.0
 
         for i, case in enumerate(cases):
             mdr_key     = case["mdr_report_key"]
@@ -287,16 +296,20 @@ def evaluate(args):
 
             try:
                 # Stage 1: Hybrid search
+                _t1 = time.time()
                 stage1_results = searcher.search(mdr_text, top_k=args.top_k_stage1)
+                stage1_total_s += time.time() - _t1
                 stage1_codes   = [r.pt_code for r in stage1_results]
 
                 if i < 3:
                     print(f"  DEBUG stage1 top5: {[(r.pt_code, r.pt_name) for r in stage1_results[:5]]}")
-                
+
                 # Stage 2: CrossEncoder rerank
+                _t2 = time.time()
                 stage2_results = reranker.rerank(mdr_text, stage1_results, top_k=args.top_k_stage2)
+                stage2_total_s += time.time() - _t2
                 stage2_codes   = [r.pt_code for r in stage2_results]
-                
+
                 if i < 3:
                     print(f"  DEBUG top5: {[(r.pt_code, r.pt_name) for r in stage2_results]}")
                     print(f"  DEBUG expected: {expected_code!r} (type={type(expected_code).__name__})")
@@ -331,24 +344,29 @@ def evaluate(args):
                     category = "hit"
 
                 rec = {
-                    "mdr_report_key":     mdr_key,
-                    "expected_pt_code":   expected_code,
-                    "expected_pt_name":   expected_name,
-                    "stage1_top10_codes": stage1_codes[:10],
-                    "stage2_top5_codes":  stage2_codes,
-                    "stage1_rank":        stage1_rank,
-                    "reranker_rank":      reranker_rank,
-                    "rank_delta":         rank_delta,
-                    "category":           category,
-                    "difficulty":         case["difficulty"],
-                    "product_code":       case["product_code"],
-                    "llm_pt_code":        None,
+                    "mdr_report_key":      mdr_key,
+                    "expected_pt_code":    expected_code,
+                    "expected_pt_name":    expected_name,
+                    "stage1_top10_codes":  stage1_codes[:10],
+                    "stage2_top5_codes":   stage2_codes,
+                    "stage1_rank":         stage1_rank,
+                    "reranker_rank":       reranker_rank,
+                    "rank_delta":          rank_delta,
+                    "category":            category,
+                    "difficulty":          case["difficulty"],
+                    "product_code":        case["product_code"],
+                    "llm_pt_code":         None,
                     "acceptable_pt_codes": acceptable,
+                    "report_snippet":      mdr_text[:100],
+                    "stage2_top5_names":   [r.pt_name for r in stage2_results],
+                    "stage2_top5_scores":  [r.crossencoder_score for r in stage2_results],
                 }
 
                 # Stage 3: LLM (optional)
                 if llm_coder is not None:
+                    _t3 = time.time()
                     coding_result = llm_coder.code(mdr_text, stage2_results)
+                    stage3_total_s += time.time() - _t3
                     rec["llm_pt_code"] = coding_result.pt_code
                     rec["llm_pt_name"] = coding_result.pt_name
 
@@ -369,9 +387,42 @@ def evaluate(args):
         # -- Metrics --------------------------------------------------------
         metrics = compute_metrics(results)
         metrics["elapsed_seconds"] = round(time.time() - t_start, 1)
+        metrics["stage1_total_s"]  = round(stage1_total_s, 2)
+        metrics["stage2_total_s"]  = round(stage2_total_s, 2)
+        metrics["stage3_total_s"]  = round(stage3_total_s, 2)
         metrics["n_errors"]        = len(errors)
 
+        mlflow.set_tag("stage3_active", "true" if llm_coder is not None else "false")
         mlflow.log_metrics(metrics)
+
+        # -- Case CSV artifact ----------------------------------------------
+        if results:
+            rows = []
+            for rec in results:
+                names  = rec.get("stage2_top5_names", [])
+                scores = rec.get("stage2_top5_scores", [])
+                row = {
+                    "case_id":       rec["mdr_report_key"],
+                    "snippet":       rec.get("report_snippet", ""),
+                    "expected_pt":   rec["expected_pt_name"],
+                    "stage1_rank":   rec["stage1_rank"],
+                    "reranker_rank": rec["reranker_rank"],
+                    "rank_delta":    rec["rank_delta"],
+                    "category":      rec["category"],
+                    "hit":           "yes" if rec["category"] == "hit" else "no",
+                }
+                for idx in range(5):
+                    row[f"rank{idx+1}_pt"]    = names[idx]  if idx < len(names)  else ""
+                    row[f"rank{idx+1}_score"]  = scores[idx] if idx < len(scores) else ""
+                rows.append(row)
+
+            csv_name = f"{run_name}_cases.csv"
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".csv", delete=False, prefix=csv_name
+            ) as tmp:
+                tmp_path = tmp.name
+            pd.DataFrame(rows).to_csv(tmp_path, index=False)
+            mlflow.log_artifact(tmp_path, artifact_path="case_details")
 
         # Log golden set as artifact
         mlflow.log_artifact(str(eval_path), artifact_path="eval_set")
