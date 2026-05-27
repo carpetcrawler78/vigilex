@@ -26,18 +26,19 @@ if [ -z "$OLLAMA_BASE_URL" ]; then
 fi
 
 TOP_K_VALUES=(20 50 100 150)
-STAGE3_MODEL="llama3.2:3b"
+# Stage 1+2 only -- no LLM, ~5 min per run, no Ollama dependency
+# Run names suffixed _s12 to distinguish from LLM runs
 
 # Accumulators for summary table
 declare -a SUMMARY_ROWS
 
 echo "============================================================"
-echo "topk_sweep -- Stage 3: ${STAGE3_MODEL}"
+echo "topk_sweep -- Stage 1+2 only (no LLM)"
 echo "top_k values: ${TOP_K_VALUES[*]}"
 echo "============================================================"
 
 for K in "${TOP_K_VALUES[@]}"; do
-  RUN_NAME="topk_sweep_${K}"
+  RUN_NAME="topk_sweep_${K}_s12"
   echo ""
   echo "------------------------------------------------------------"
   echo "Running: top_k_stage1=${K}  run_name=${RUN_NAME}"
@@ -45,7 +46,6 @@ for K in "${TOP_K_VALUES[@]}"; do
 
   T0=$(date +%s)
   python3 "${EVAL_SCRIPT}" \
-    --stage3-model "${STAGE3_MODEL}" \
     --run-name     "${RUN_NAME}" \
     --top-k-stage1 "${K}" \
     2>&1 | tee "/tmp/topk_sweep_${K}.log"
