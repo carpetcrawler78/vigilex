@@ -211,9 +211,9 @@ def evaluate(args):
         rrf_k=RRF_K,
     )
 
-    print("Loading CrossEncoderReranker...")
+    print(f"Loading CrossEncoderReranker ({args.reranker_model})...")
     t0 = time.time()
-    reranker = CrossEncoderReranker()
+    reranker = CrossEncoderReranker(model_name=args.reranker_model)
     print(f"  CrossEncoderReranker ready ({time.time()-t0:.1f}s)")
 
     # Optional Stage 3
@@ -252,9 +252,10 @@ def evaluate(args):
         base_name = args.run_name or "groq_lm31_8b"
         run_name = base_name + "_groq_ref"
     else:
+        ce_slug = args.reranker_model.split("/")[-1].replace(".", "_").lower()
         run_name = args.run_name or (
             f"eval_{args.stage3_model.replace(':', '_')}" if args.stage3_model
-            else "eval_stage1_2_only"
+            else f"eval_ce_{ce_slug}"
         )
 
     with mlflow.start_run(run_name=run_name):
@@ -263,7 +264,7 @@ def evaluate(args):
             "eval_set":         eval_path.name,
             "n_cases":          len(cases),
             "stage1_model":     "all-mpnet-base-v2",
-            "stage2_model":     "cross-encoder/ms-marco-MiniLM-L-6-v2",
+            "stage2_model":     args.reranker_model,
             "stage3_model":     stage3_model_label,
             "rrf_w_bm25":       0.4,
             "rrf_w_vector":     0.6,
@@ -272,6 +273,7 @@ def evaluate(args):
             "top_k_stage2":     args.top_k_stage2,
             "candidate_pool":   args.candidate_pool,
         })
+        mlflow.set_tag("reranker_model", args.reranker_model)
         if groq_reference:
             mlflow.set_tag("backend", "groq_reference")
             mlflow.set_tag("production_eligible", "false")
@@ -464,6 +466,9 @@ def parse_args():
                         "Requires GROQ_API_KEY env var.")
     p.add_argument("--ollama-url",    default=None,
                    help="Ollama base URL (default: $OLLAMA_BASE_URL or http://localhost:11434)")
+    p.add_argument("--reranker-model", default="cross-encoder/ms-marco-MiniLM-L-6-v2",
+                   help="HuggingFace model ID for CrossEncoderReranker "
+                        "(default: cross-encoder/ms-marco-MiniLM-L-6-v2)")
     p.add_argument("--top-k-stage1",  type=int, default=20,
                    help="Top-K from Stage 1 hybrid search (default: 20)")
     p.add_argument("--top-k-stage2",  type=int, default=5,
