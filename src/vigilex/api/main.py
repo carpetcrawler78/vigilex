@@ -57,7 +57,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],   # tighten in production if needed
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -117,6 +117,18 @@ class HealthResponse(BaseModel):
     status: str
     db: str
     version: str
+
+
+class DecisionRequest(BaseModel):
+    action: str          # 'accepted' | 'rejected' | 'overridden'
+    note: Optional[str] = None  # free-text reviewer comment
+
+
+class DecisionResponse(BaseModel):
+    id: int
+    reviewer_action: str
+    reviewer_at: datetime
+    reviewer_note: Optional[str]
 
 
 # ---------------------------------------------------------------------------
@@ -328,3 +340,59 @@ def get_coding_result(
         raise HTTPException(status_code=404, detail=f"Record {record_id} not found.")
 
     return CodingResult(**dict(row))
+
+
+@app.post(
+    "/coding-results/{record_id}/decision",
+    response_model=DecisionResponse,
+    tags=["Coding Results"],
+)
+def save_decision(
+    record_id: int,
+    body: DecisionRequest,
+    _key: str = Depends(require_api_key),
+):
+    """
+    Save a reviewer decision for a coding result.
+
+    Sets reviewer_action, reviewer_at (NOW()), and reviewer_note.
+    Returns 404 if the record does not exist.
+    Returns 400 if action is not one of: accepted, rejected, overridden.
+    """
+    valid_actions = {"accepted", "rejected", "overridden"}
+    if body.action not in valid_actions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid action '{body.action}'. Must be one of: {sorted(valid_actions)}",
+        )
+
+    sql_check = "SELECT id FROM processed.coding_results WHERE id = %s"
+    sql_update = """
+        UPDATE processed.coding_results
+        SET reviewer_action = %s,
+            reviewer_at     = NOW(),
+            reviewer_note   = %s
+        WHERE id = %s
+        RETURNING id, reviewer_action, reviewer_at, reviewer_note
+    """
+
+    try:
+        conn = get_connection()
+        cur = get_cursor(conn)
+
+        cur.execute(sql_check, (record_id,))
+        if cur.fetchone() is None:
+            conn.close()
+            raise HTTPException(status_code=404, detail=f"Record {record_id} not found.")
+
+        cur.execute(sql_update, (body.action, body.note, record_id))
+        row = cur.fetchone()
+        conn.commit()
+        conn.close()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("DB error in save_decision(%s): %s", record_id, exc)
+        raise HTTPException(status_code=500, detail=f"Database error: {exc}")
+
+    return DecisionResponse(**dict(row))

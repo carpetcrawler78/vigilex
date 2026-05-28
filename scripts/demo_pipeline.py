@@ -108,6 +108,48 @@ def fetch_cases_from_db(conn, keys: list) -> list:
     return result
 
 
+def fetch_random_uncoded(conn, n: int) -> list:
+    """
+    Fetch N random records from raw.maude_reports that have not yet been
+    processed by the coding pipeline (no entry in processed.coding_results).
+
+    Filters:
+      - mdr_text IS NOT NULL
+      - LENGTH(mdr_text) > 100   (skip near-empty boilerplate)
+      - NOT IN coding_results    (truly unseen by pipeline)
+
+    Returns list of (product_code, mdr_text, mdr_report_key) tuples.
+    """
+    sql = """
+        SELECT
+            r.mdr_report_key,
+            r.product_code,
+            r.mdr_text
+        FROM raw.maude_reports r
+        WHERE r.mdr_text IS NOT NULL
+          AND LENGTH(r.mdr_text) > 100
+          AND r.mdr_report_key NOT IN (
+              SELECT mdr_report_key FROM processed.coding_results
+          )
+        ORDER BY RANDOM()
+        LIMIT %s
+    """
+    with conn.cursor() as cur:
+        cur.execute(sql, (n,))
+        rows = cur.fetchall()
+
+    if not rows:
+        print("  WARNING: no uncoded records found in raw.maude_reports")
+        return []
+
+    result = []
+    for mdr_report_key, product_code, mdr_text in rows:
+        result.append((product_code or "???", mdr_text, mdr_report_key))
+
+    print(f"  Fetched {len(result)} random uncoded records from DB")
+    return result
+
+
 def sigmoid(x: float) -> float:
     return 1.0 / (1.0 + math.exp(-x))
 
@@ -123,7 +165,7 @@ def compute_fc(ce_score: float, llm_confidence) -> float:
 # ---------------------------------------------------------------------------
 
 def run_pipeline(text, conn, embedding_model, reranker, llm_coder,
-                 top_k_stage1=20):
+                 top_k_stage1=20, skip_llm=False):
     t0 = time.time()
 
     searcher = HybridSearcher(conn, embedding_model=embedding_model)
@@ -136,18 +178,23 @@ def run_pipeline(text, conn, embedding_model, reranker, llm_coder,
     stage2 = reranker.rerank(text, stage1, top_k=5)
     t2e = time.time()
 
-    t3s = time.time()
-    result = llm_coder.code(text, stage2)
-    t3e = time.time()
+    if skip_llm or llm_coder is None:
+        result = None
+        t3e = t3s = time.time()
+    else:
+        t3s = time.time()
+        result = llm_coder.code(text, stage2)
+        t3e = time.time()
 
     return {
-        "stage1":   stage1,
-        "stage2":   stage2,
-        "result":   result,
-        "t1":       t1e - t1s,
-        "t2":       t2e - t2s,
-        "t3":       t3e - t3s,
-        "elapsed":  time.time() - t0,
+        "stage1":    stage1,
+        "stage2":    stage2,
+        "result":    result,
+        "t1":        t1e - t1s,
+        "t2":        t2e - t2s,
+        "t3":        t3e - t3s,
+        "elapsed":   time.time() - t0,
+        "skip_llm":  skip_llm,
     }
 
 
@@ -188,26 +235,34 @@ def print_result(text, out, case_num=None, key=None):
     print(SEP)
 
     # Stage 3
-    res = out["result"]
-    fallback = res.fallback_reason or "No"
-    backend  = res.llm_backend or "ollama"
-    model_lbl = "groq" if "groq" in backend else "llama3.2:3b"
-    print(f"STAGE 3  (LLM: {model_lbl})   [{out['t3']:.1f}s]")
-    print(f"  selected:  {res.pt_name} ({res.pt_code})")
-    conf_str = str(res.confidence) if res.confidence is not None else "n/a (fallback)"
-    print(f"  ordinal:   {conf_str}")
-    print(f"  rationale: \"{(res.rationale or '')[:200]}\"")
+    if out.get("skip_llm") or out["result"] is None:
+        print(f"STAGE 3  (LLM: skipped)")
+    else:
+        res = out["result"]
+        fallback = res.fallback_reason or "No"
+        backend  = res.llm_backend or "ollama"
+        model_lbl = "groq" if "groq" in backend else "llama3.2:3b"
+        print(f"STAGE 3  (LLM: {model_lbl})   [{out['t3']:.1f}s]")
+        print(f"  selected:  {res.pt_name} ({res.pt_code})")
+        conf_str = str(res.confidence) if res.confidence is not None else "n/a (fallback)"
+        print(f"  ordinal:   {conf_str}")
+        print(f"  rationale: \"{(res.rationale or '')[:200]}\"")
     print(SEP)
 
     # Final
-    ce_top = s2[0].crossencoder_score if s2 else 0.0
-    fc = compute_fc(ce_top, res.confidence)
-    print("FINAL:")
-    print(f"  PT       = {res.pt_name} ({res.pt_code})")
-    print(f"  SOC      = {res.soc_name}")
-    print(f"  fc       = {fc:.3f}")
-    print(f"  fallback = {fallback}")
-    print(f"  elapsed  = {out['elapsed']:.1f}s")
+    if not out.get("skip_llm") and out["result"] is not None:
+        res = out["result"]
+        ce_top = s2[0].crossencoder_score if s2 else 0.0
+        fc = compute_fc(ce_top, res.confidence)
+        print("FINAL:")
+        print(f"  PT       = {res.pt_name} ({res.pt_code})")
+        print(f"  SOC      = {res.soc_name}")
+        print(f"  fc       = {fc:.3f}")
+        print(f"  fallback = {res.fallback_reason or 'No'}")
+        print(f"  elapsed  = {out['elapsed']:.1f}s")
+    else:
+        print(f"FINAL:  Stage 2 top pick: {s2[0].pt_name if s2 else 'n/a'}")
+        print(f"  elapsed  = {out['elapsed']:.1f}s")
 
 
 # ---------------------------------------------------------------------------
@@ -225,10 +280,24 @@ def main():
     grp.add_argument("--live", nargs="*", metavar="MDR_KEY",
                      help="Fetch text from DB by mdr_report_key. "
                           "Pass one or more keys, or no keys to use the 3 default demo keys.")
+    grp.add_argument(
+        "--random",
+        type=int,
+        metavar="N",
+        help=(
+            "Fetch N random records from raw.maude_reports that are NOT yet "
+            "in processed.coding_results. Runs full pipeline on each."
+        ),
+    )
     parser.add_argument("--product-code", type=str, default="QFG",
                         help="Product code label (display only, default: QFG)")
     parser.add_argument("--top-k", type=int, default=20,
                         help="Stage 1 top_k (default: 20)")
+    parser.add_argument(
+        "--skip-llm",
+        action="store_true",
+        help="Skip Stage 3 (Ollama LLM). Only Stage 1 + Stage 2 run. Faster.",
+    )
     args = parser.parse_args()
 
     db_url = os.environ.get("DATABASE_URL")
@@ -236,8 +305,8 @@ def main():
         sys.exit("DATABASE_URL not set in environment / .env")
 
     ollama_url = os.environ.get("OLLAMA_BASE_URL")
-    if not ollama_url:
-        sys.exit("OLLAMA_BASE_URL not set in environment / .env")
+    if not ollama_url and not args.skip_llm:
+        sys.exit("OLLAMA_BASE_URL not set. Use --skip-llm to run without Ollama.")
 
     print("Loading EmbeddingModel (all-mpnet-base-v2)...")
     t0 = time.time()
@@ -249,10 +318,14 @@ def main():
     reranker = CrossEncoderReranker()
     print(f"  ready ({time.time()-t0:.1f}s)")
 
-    print("Connecting to LLM (Ollama)...")
-    t0 = time.time()
-    llm_coder = LLMCoder(ollama_url=ollama_url)
-    print(f"  ready ({time.time()-t0:.1f}s)")
+    if args.skip_llm:
+        llm_coder = None
+        print("LLM stage skipped (--skip-llm)")
+    else:
+        print("Connecting to LLM (Ollama)...")
+        t0 = time.time()
+        llm_coder = LLMCoder(ollama_url=ollama_url)
+        print(f"  ready ({time.time()-t0:.1f}s)")
 
     conn = psycopg2.connect(db_url)
 
@@ -265,6 +338,11 @@ def main():
             conn.close()
             sys.exit("No records found in DB for the given keys.")
         cases = fetched
+    elif args.random is not None:
+        cases = fetch_random_uncoded(conn, args.random)
+        if not cases:
+            conn.close()
+            sys.exit("No uncoded records available.")
     else:
         cases = [(args.product_code, args.text, None)]
 
@@ -275,28 +353,31 @@ def main():
         label = key or f"case {i}"
         print(f"\nRunning {label} ({i}/{len(cases)})...")
         out = run_pipeline(text, conn, em, reranker, llm_coder,
-                           top_k_stage1=args.top_k)
+                           top_k_stage1=args.top_k,
+                           skip_llm=args.skip_llm)
         outputs.append(out)
-        show_num = i if (args.demo or args.live is not None) else None
+        show_num = i if (args.demo or args.live is not None or args.random is not None) else None
         print_result(text, out, case_num=show_num, key=key)
 
     conn.close()
 
-    if args.demo or args.live is not None:
+    if args.demo or args.live is not None or args.random is not None:
         print(f"\n{'=' * 72}")
         print(f"SUMMARY  ({len(outputs)} cases)")
-        n_fb  = sum(1 for o in outputs if o["result"].fallback_reason)
         avg_e = sum(o["elapsed"] for o in outputs) / len(outputs)
-        avg_fc = sum(
-            compute_fc(
-                o["stage2"][0].crossencoder_score if o["stage2"] else 0.0,
-                o["result"].confidence
-            )
-            for o in outputs
-        ) / len(outputs)
-        print(f"  fallback:    {n_fb}/{len(outputs)}")
-        print(f"  avg fc:      {avg_fc:.3f}")
         print(f"  avg elapsed: {avg_e:.1f}s")
+        if not args.skip_llm:
+            n_fb = sum(1 for o in outputs if o["result"] and o["result"].fallback_reason)
+            avg_fc = sum(
+                compute_fc(
+                    o["stage2"][0].crossencoder_score if o["stage2"] else 0.0,
+                    o["result"].confidence,
+                )
+                for o in outputs
+                if o["result"]
+            ) / len(outputs)
+            print(f"  fallback:    {n_fb}/{len(outputs)}")
+            print(f"  avg fc:      {avg_fc:.3f}")
         print(f"{'=' * 72}")
 
 
