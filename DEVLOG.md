@@ -65,3 +65,6 @@ Production-excluded by design (GDPR Art.44+Art.9), nicht wegen Capability.
 ## 2026-05-31 17:42 -- Datum-Fix + Slide-Rename + Pipeline-Refactor
 - DONE: Datums-Footer auf 03 Jun 2026 korrigiert (6 Dateien: slide2, slide_eng_tools, slide_gold, slide_metrics, slide_pipeline_a, GrafanaSlide.tsx), routes/index.tsx Titel auf "Final Presentation", Pipeline.tsx als wiederverwendbares Component extrahiert (Slot 10, reveal-Prop "abstract"/"models"), alle 14 aktiven Slide-Dateien auf Slide0N_Name-Schema umbenannt, Deck.tsx-Imports aktualisiert, Build gruen (221 modules, 2.2s).
 - MISTAKE: Kein -- tote Imports in Deck.tsx waren nicht vorhanden (slide_final existiert in data/ aber war nie importiert).
+
+## 2026-05-31 18:00 -- Housekeeping: tote Slides nach alt/
+- DONE: SlideB.tsx (identische Kopie in alt/ bestaetigt per SHA256), slide5.html, slide_final.html nach alt/ verschoben; Build gruen (221/279 modules, 1.93s).
