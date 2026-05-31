@@ -47,56 +47,8 @@
             "type": "postgres",
             "uid": "vigilex_pg"
           },
-          "rawSql": "SELECT\n  date_trunc('hour', coded_at) AS time,\n  COUNT(*) AS records_coded\nFROM processed.coding_results\nWHERE coded_at >= NOW() - INTERVAL '7 days'\nGROUP BY 1\nORDER BY 1",
+          "rawSql": "SELECT\n  date_trunc('hour', coded_at) AS time,\n  COUNT(*) AS records_coded\nFROM processed.coding_results\nWHERE coded_at >= NOW() - INTERVAL '7 days'\n  AND coding_path IS NOT NULL\nGROUP BY 1\nORDER BY 1",
           "format": "time_series",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 2,
-      "title": "Top 15 Adverse Events (PT codes, LZG)",
-      "type": "barchart",
-      "gridPos": {
-        "h": 10,
-        "w": 12,
-        "x": 12,
-        "y": 0
-      },
-      "datasource": {
-        "type": "postgres",
-        "uid": "vigilex_pg"
-      },
-      "options": {
-        "orientation": "horizontal",
-        "barWidth": 0.7,
-        "tooltip": {
-          "mode": "single"
-        },
-        "legend": {
-          "displayMode": "hidden"
-        }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "blue"
-          },
-          "custom": {
-            "fillOpacity": 80
-          }
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "vigilex_pg"
-          },
-          "rawSql": "SELECT pt_name, COUNT(*) AS n\nFROM processed.coding_results\nWHERE pt_name IS NOT NULL\n  AND pt_name NOT LIKE 'SKIPPED%'\n  AND final_confidence > 0.3\n  AND pt_name NOT IN ('Device psychogenic complication', 'Medical device site papule')\nGROUP BY pt_name ORDER BY n DESC LIMIT 15",
-          "format": "table",
           "refId": "A"
         }
       ]
@@ -104,7 +56,7 @@
     {
       "id": 3,
       "title": "Ranking Index Distribution",
-      "type": "histogram",
+      "type": "barchart",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -116,8 +68,10 @@
         "uid": "vigilex_pg"
       },
       "options": {
-        "bucketSize": "auto",
+        "orientation": "auto",
+        "xField": "bucket_start",
         "fillOpacity": 80,
+        "barWidth": 0.9,
         "tooltip": {
           "mode": "single"
         },
@@ -131,6 +85,9 @@
           "color": {
             "mode": "fixed",
             "fixedColor": "green"
+          },
+          "custom": {
+            "fillOpacity": 80
           }
         },
         "overrides": []
@@ -141,7 +98,73 @@
             "type": "postgres",
             "uid": "vigilex_pg"
           },
-          "rawSql": "SELECT final_confidence FROM processed.coding_results WHERE final_confidence IS NOT NULL",
+          "rawSql": "SELECT\n  ROUND((width_bucket(final_confidence, 0.0, 1.0, 10) - 1) * 0.1, 1) AS bucket_start,\n  COUNT(*) AS n\nFROM processed.coding_results\nWHERE coding_path = 'hybrid_ce_llm_success'\n  AND final_confidence IS NOT NULL\n  AND final_confidence > 0\nGROUP BY 1\nORDER BY 1",
+          "format": "table",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Triage Categories (Post-Fix Records)",
+      "type": "barchart",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "vigilex_pg"
+      },
+      "options": {
+        "orientation": "auto",
+        "xField": "category",
+        "xTickLabelRotation": 0,
+        "barWidth": 0.7,
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 80
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "01 Flag for Review"},
+            "properties": [
+              {"id": "color", "value": {"mode": "fixed", "fixedColor": "#E05252"}}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "02 Uncertain"},
+            "properties": [
+              {"id": "color", "value": {"mode": "fixed", "fixedColor": "#E8C84A"}}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "03 Accept"},
+            "properties": [
+              {"id": "color", "value": {"mode": "fixed", "fixedColor": "#52B788"}}
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "vigilex_pg"
+          },
+          "rawSql": "SELECT\n  'Distribution' AS category,\n  COUNT(*) FILTER (WHERE final_confidence < 0.30)                              AS \"01 Flag for Review\",\n  COUNT(*) FILTER (WHERE final_confidence >= 0.30 AND final_confidence < 0.65) AS \"02 Uncertain\",\n  COUNT(*) FILTER (WHERE final_confidence >= 0.65)                             AS \"03 Accept\"\nFROM processed.coding_results\nWHERE final_confidence > 0\n  AND coding_path = 'hybrid_ce_llm_success'",
           "format": "table",
           "refId": "A"
         }
@@ -149,13 +172,13 @@
     },
     {
       "id": 4,
-      "title": "Coding Quality Summary",
+      "title": "System Summary",
       "type": "stat",
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 8
+        "y": 10
       },
       "datasource": {
         "type": "postgres",
@@ -175,7 +198,15 @@
         "graphMode": "none"
       },
       "fieldConfig": {
-        "defaults": {},
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null}
+            ]
+          },
+          "color": {"mode": "thresholds"}
+        },
         "overrides": []
       },
       "targets": [
@@ -184,7 +215,7 @@
             "type": "postgres",
             "uid": "vigilex_pg"
           },
-          "rawSql": "SELECT COUNT(*) AS \"Total Coded\" FROM processed.coding_results",
+          "rawSql": "SELECT COUNT(*) AS \"Total Coded\" FROM processed.coding_results WHERE coding_path IS NOT NULL",
           "format": "table",
           "refId": "A"
         },
@@ -193,16 +224,7 @@
             "type": "postgres",
             "uid": "vigilex_pg"
           },
-          "rawSql": "SELECT ROUND(AVG(final_confidence)::numeric, 3) AS \"Avg Ranking Index\" FROM processed.coding_results",
-          "format": "table",
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "vigilex_pg"
-          },
-          "rawSql": "SELECT ROUND(100.0 * SUM(CASE WHEN final_confidence >= 0.7 THEN 1 ELSE 0 END) / COUNT(*)::numeric, 1) AS \"High Conf %\" FROM processed.coding_results",
+          "rawSql": "SELECT 62.5 AS \"Soft Recall@5 (%)\"",
           "format": "table",
           "refId": "C"
         },
@@ -211,9 +233,163 @@
             "type": "postgres",
             "uid": "vigilex_pg"
           },
-          "rawSql": "SELECT COUNT(DISTINCT pt_name) AS \"Unique PTs\" FROM processed.coding_results",
+          "rawSql": "SELECT 83.3 AS \"Soft Recall@10 (%)\"",
           "format": "table",
           "refId": "D"
+        },
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "vigilex_pg"
+          },
+          "rawSql": "SELECT COUNT(DISTINCT pt_name) AS \"Unique PTs\" FROM processed.coding_results WHERE coding_path IS NOT NULL",
+          "format": "table",
+          "refId": "E"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Eval Quality -- ELECTRA + qwen2.5:7b (24 Gold Cases)",
+      "type": "stat",
+      "gridPos": {
+        "h": 8,
+        "w": 13,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "vigilex_pg"
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "blue", "value": null}
+            ]
+          },
+          "color": {"mode": "thresholds"}
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "vigilex_pg"
+          },
+          "rawSql": "SELECT 37.5 AS \"Recall@5 (%)\"",
+          "format": "table",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "vigilex_pg"
+          },
+          "rawSql": "SELECT 62.5 AS \"Soft Recall@5 (%)\"",
+          "format": "table",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "vigilex_pg"
+          },
+          "rawSql": "SELECT 37.5 AS \"P@1 LLM (%)\"",
+          "format": "table",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Coding Outcome -- 24 Gold Cases",
+      "type": "piechart",
+      "gridPos": {
+        "h": 8,
+        "w": 11,
+        "x": 13,
+        "y": 16
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "vigilex_pg"
+      },
+      "options": {
+        "pieType": "pie",
+        "tooltip": {
+          "mode": "single"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "right"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "cat_hit (Correct)"},
+            "properties": [
+              {"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "cat_B (CE dropped)"},
+            "properties": [
+              {"id": "color", "value": {"mode": "fixed", "fixedColor": "yellow"}}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "cat_A (Stage-1 miss)"},
+            "properties": [
+              {"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "vigilex_pg"
+          },
+          "rawSql": "SELECT 8 AS \"cat_hit (Correct)\"",
+          "format": "table",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "vigilex_pg"
+          },
+          "rawSql": "SELECT 5 AS \"cat_B (CE dropped)\"",
+          "format": "table",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "vigilex_pg"
+          },
+          "rawSql": "SELECT 11 AS \"cat_A (Stage-1 miss)\"",
+          "format": "table",
+          "refId": "C"
         }
       ]
     },
@@ -225,7 +401,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 16
+        "y": 24
       },
       "datasource": {
         "type": "postgres",
@@ -251,7 +427,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT mdr_report_key, pt_name, pt_code, llt_name, soc_name, ROUND(final_confidence::numeric, 3) AS confidence, ROUND(crossencoder_score::numeric, 3) AS crossencoder, coded_at FROM processed.coding_results ORDER BY coded_at DESC LIMIT 2000",
+          "rawSql": "SELECT mdr_report_key, pt_name, pt_code, llt_name, soc_name, ROUND(final_confidence::numeric, 3) AS confidence, ROUND(crossencoder_score::numeric, 3) AS crossencoder, coded_at FROM processed.coding_results WHERE coding_path IS NOT NULL ORDER BY coded_at DESC LIMIT 2000",
           "refId": "A"
         }
       ]
@@ -275,5 +451,5 @@
   "timezone": "browser",
   "title": "SentinelAI -- MedDRA Coding Monitor",
   "uid": "sentinelai-coding-v1",
-  "version": 1
+  "version": 5
 }
