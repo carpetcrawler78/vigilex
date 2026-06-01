@@ -1,455 +1,846 @@
 {
-  "annotations": {
-    "list": []
-  },
-  "editable": true,
-  "graphTooltip": 1,
-  "links": [],
-  "panels": [
-    {
-      "id": 1,
-      "title": "Coding Throughput (records/hour)",
-      "type": "timeseries",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 0
-      },
-      "datasource": {
-        "type": "postgres",
-        "uid": "vigilex_pg"
-      },
-      "options": {
-        "tooltip": {
-          "mode": "single"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 10
-          }
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "vigilex_pg"
-          },
-          "rawSql": "SELECT\n  date_trunc('hour', coded_at) AS time,\n  COUNT(*) AS records_coded\nFROM processed.coding_results\nWHERE coded_at >= NOW() - INTERVAL '7 days'\n  AND coding_path IS NOT NULL\nGROUP BY 1\nORDER BY 1",
-          "format": "time_series",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 3,
-      "title": "Ranking Index Distribution",
-      "type": "barchart",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 8
-      },
-      "datasource": {
-        "type": "postgres",
-        "uid": "vigilex_pg"
-      },
-      "options": {
-        "orientation": "auto",
-        "xField": "bucket_start",
-        "fillOpacity": 80,
-        "barWidth": 0.9,
-        "tooltip": {
-          "mode": "single"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "fixed",
-            "fixedColor": "green"
-          },
-          "custom": {
-            "fillOpacity": 80
-          }
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "vigilex_pg"
-          },
-          "rawSql": "SELECT\n  ROUND((width_bucket(final_confidence, 0.0, 1.0, 10) - 1) * 0.1, 1) AS bucket_start,\n  COUNT(*) AS n\nFROM processed.coding_results\nWHERE coding_path = 'hybrid_ce_llm_success'\n  AND final_confidence IS NOT NULL\n  AND final_confidence > 0\nGROUP BY 1\nORDER BY 1",
-          "format": "table",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 7,
-      "title": "Triage Categories (Post-Fix Records)",
-      "type": "barchart",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 8
-      },
-      "datasource": {
-        "type": "postgres",
-        "uid": "vigilex_pg"
-      },
-      "options": {
-        "orientation": "auto",
-        "xField": "category",
-        "xTickLabelRotation": 0,
-        "barWidth": 0.7,
-        "tooltip": {
-          "mode": "single"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        }
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "fillOpacity": 80
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {"id": "byName", "options": "01 Flag for Review"},
-            "properties": [
-              {"id": "color", "value": {"mode": "fixed", "fixedColor": "#E05252"}}
-            ]
-          },
-          {
-            "matcher": {"id": "byName", "options": "02 Uncertain"},
-            "properties": [
-              {"id": "color", "value": {"mode": "fixed", "fixedColor": "#E8C84A"}}
-            ]
-          },
-          {
-            "matcher": {"id": "byName", "options": "03 Accept"},
-            "properties": [
-              {"id": "color", "value": {"mode": "fixed", "fixedColor": "#52B788"}}
-            ]
-          }
-        ]
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "vigilex_pg"
-          },
-          "rawSql": "SELECT\n  'Distribution' AS category,\n  COUNT(*) FILTER (WHERE final_confidence < 0.30)                              AS \"01 Flag for Review\",\n  COUNT(*) FILTER (WHERE final_confidence >= 0.30 AND final_confidence < 0.65) AS \"02 Uncertain\",\n  COUNT(*) FILTER (WHERE final_confidence >= 0.65)                             AS \"03 Accept\"\nFROM processed.coding_results\nWHERE final_confidence > 0\n  AND coding_path = 'hybrid_ce_llm_success'",
-          "format": "table",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 4,
-      "title": "System Summary",
-      "type": "stat",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 10
-      },
-      "datasource": {
-        "type": "postgres",
-        "uid": "vigilex_pg"
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "orientation": "auto",
-        "textMode": "auto",
-        "colorMode": "background",
-        "graphMode": "none"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {"color": "green", "value": null}
-            ]
-          },
-          "color": {"mode": "thresholds"}
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "vigilex_pg"
-          },
-          "rawSql": "SELECT COUNT(*) AS \"Total Coded\" FROM processed.coding_results WHERE coding_path IS NOT NULL",
-          "format": "table",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "vigilex_pg"
-          },
-          "rawSql": "SELECT 62.5 AS \"Soft Recall@5 (%)\"",
-          "format": "table",
-          "refId": "C"
-        },
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "vigilex_pg"
-          },
-          "rawSql": "SELECT 83.3 AS \"Soft Recall@10 (%)\"",
-          "format": "table",
-          "refId": "D"
-        },
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "vigilex_pg"
-          },
-          "rawSql": "SELECT COUNT(DISTINCT pt_name) AS \"Unique PTs\" FROM processed.coding_results WHERE coding_path IS NOT NULL",
-          "format": "table",
-          "refId": "E"
-        }
-      ]
-    },
-    {
-      "id": 5,
-      "title": "Eval Quality -- ELECTRA + qwen2.5:7b (24 Gold Cases)",
-      "type": "stat",
-      "gridPos": {
-        "h": 8,
-        "w": 13,
-        "x": 0,
-        "y": 16
-      },
-      "datasource": {
-        "type": "postgres",
-        "uid": "vigilex_pg"
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "orientation": "auto",
-        "textMode": "auto",
-        "colorMode": "background",
-        "graphMode": "none"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {"color": "blue", "value": null}
-            ]
-          },
-          "color": {"mode": "thresholds"}
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "vigilex_pg"
-          },
-          "rawSql": "SELECT 37.5 AS \"Recall@5 (%)\"",
-          "format": "table",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "vigilex_pg"
-          },
-          "rawSql": "SELECT 62.5 AS \"Soft Recall@5 (%)\"",
-          "format": "table",
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "vigilex_pg"
-          },
-          "rawSql": "SELECT 37.5 AS \"P@1 LLM (%)\"",
-          "format": "table",
-          "refId": "C"
-        }
-      ]
-    },
-    {
-      "id": 6,
-      "title": "Coding Outcome -- 24 Gold Cases",
-      "type": "piechart",
-      "gridPos": {
-        "h": 8,
-        "w": 11,
-        "x": 13,
-        "y": 16
-      },
-      "datasource": {
-        "type": "postgres",
-        "uid": "vigilex_pg"
-      },
-      "options": {
-        "pieType": "pie",
-        "tooltip": {
-          "mode": "single"
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "right"
-        }
-      },
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": [
-          {
-            "matcher": {"id": "byName", "options": "cat_hit (Correct)"},
-            "properties": [
-              {"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}
-            ]
-          },
-          {
-            "matcher": {"id": "byName", "options": "cat_B (CE dropped)"},
-            "properties": [
-              {"id": "color", "value": {"mode": "fixed", "fixedColor": "yellow"}}
-            ]
-          },
-          {
-            "matcher": {"id": "byName", "options": "cat_A (Stage-1 miss)"},
-            "properties": [
-              {"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}
-            ]
-          }
-        ]
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "vigilex_pg"
-          },
-          "rawSql": "SELECT 8 AS \"cat_hit (Correct)\"",
-          "format": "table",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "vigilex_pg"
-          },
-          "rawSql": "SELECT 5 AS \"cat_B (CE dropped)\"",
-          "format": "table",
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "vigilex_pg"
-          },
-          "rawSql": "SELECT 11 AS \"cat_A (Stage-1 miss)\"",
-          "format": "table",
-          "refId": "C"
-        }
-      ]
-    },
-    {
-      "id": 99,
-      "title": "Coding Results -- Full Table",
-      "type": "table",
-      "gridPos": {
-        "h": 12,
-        "w": 24,
-        "x": 0,
-        "y": 24
-      },
-      "datasource": {
-        "type": "postgres",
-        "uid": "vigilex_pg"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "filterable": true
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "sortBy": []
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "vigilex_pg"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "SELECT mdr_report_key, pt_name, pt_code, llt_name, soc_name, ROUND(final_confidence::numeric, 3) AS confidence, ROUND(crossencoder_score::numeric, 3) AS crossencoder, coded_at FROM processed.coding_results WHERE coding_path IS NOT NULL ORDER BY coded_at DESC LIMIT 2000",
-          "refId": "A"
-        }
-      ]
-    }
-  ],
-  "refresh": "30s",
-  "schemaVersion": 38,
-  "tags": [
-    "sentinelai",
-    "meddra",
-    "vigilex"
-  ],
-  "templating": {
-    "list": []
-  },
-  "time": {
-    "from": "now-7d",
-    "to": "now"
-  },
-  "timepicker": {},
-  "timezone": "browser",
-  "title": "SentinelAI -- MedDRA Coding Monitor",
-  "uid": "sentinelai-coding-v1",
-  "version": 5
+    "annotations":  {
+                        "list":  [
+                                     {
+                                         "builtIn":  1,
+                                         "datasource":  {
+                                                            "type":  "grafana",
+                                                            "uid":  "-- Grafana --"
+                                                        },
+                                         "enable":  true,
+                                         "hide":  true,
+                                         "iconColor":  "rgba(0, 211, 255, 1)",
+                                         "name":  "Annotations \u0026 Alerts",
+                                         "type":  "dashboard"
+                                     }
+                                 ]
+                    },
+    "editable":  true,
+    "fiscalYearStartMonth":  0,
+    "graphTooltip":  1,
+    "id":  480628391075840,
+    "links":  [
+
+              ],
+    "panels":  [
+                   {
+                       "datasource":  {
+                                          "type":  "postgres",
+                                          "uid":  "vigilex_pg"
+                                      },
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "color":  {
+                                                                          "mode":  "palette-classic"
+                                                                      },
+                                                            "custom":  {
+                                                                           "axisBorderShow":  false,
+                                                                           "axisCenteredZero":  false,
+                                                                           "axisColorMode":  "text",
+                                                                           "axisLabel":  "",
+                                                                           "axisPlacement":  "auto",
+                                                                           "fillOpacity":  80,
+                                                                           "gradientMode":  "none",
+                                                                           "hideFrom":  {
+                                                                                            "legend":  false,
+                                                                                            "tooltip":  false,
+                                                                                            "viz":  false
+                                                                                        },
+                                                                           "lineWidth":  1,
+                                                                           "scaleDistribution":  {
+                                                                                                     "type":  "linear"
+                                                                                                 },
+                                                                           "thresholdsStyle":  {
+                                                                                                   "mode":  "off"
+                                                                                               }
+                                                                       },
+                                                            "mappings":  [
+
+                                                                         ],
+                                                            "thresholds":  {
+                                                                               "mode":  "absolute",
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  0
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "red",
+                                                                                                 "value":  80
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        },
+                                           "overrides":  [
+                                                             {
+                                                                 "matcher":  {
+                                                                                 "id":  "byName",
+                                                                                 "options":  "01 Flag for Review"
+                                                                             },
+                                                                 "properties":  [
+                                                                                    {
+                                                                                        "id":  "color",
+                                                                                        "value":  {
+                                                                                                      "fixedColor":  "#E05252",
+                                                                                                      "mode":  "fixed"
+                                                                                                  }
+                                                                                    }
+                                                                                ]
+                                                             },
+                                                             {
+                                                                 "matcher":  {
+                                                                                 "id":  "byName",
+                                                                                 "options":  "02 Uncertain"
+                                                                             },
+                                                                 "properties":  [
+                                                                                    {
+                                                                                        "id":  "color",
+                                                                                        "value":  {
+                                                                                                      "fixedColor":  "#E8C84A",
+                                                                                                      "mode":  "fixed"
+                                                                                                  }
+                                                                                    }
+                                                                                ]
+                                                             },
+                                                             {
+                                                                 "matcher":  {
+                                                                                 "id":  "byName",
+                                                                                 "options":  "03 Accept"
+                                                                             },
+                                                                 "properties":  [
+                                                                                    {
+                                                                                        "id":  "color",
+                                                                                        "value":  {
+                                                                                                      "fixedColor":  "#52B788",
+                                                                                                      "mode":  "fixed"
+                                                                                                  }
+                                                                                    }
+                                                                                ]
+                                                             }
+                                                         ]
+                                       },
+                       "gridPos":  {
+                                       "h":  12,
+                                       "w":  4,
+                                       "x":  0,
+                                       "y":  0
+                                   },
+                       "id":  3,
+                       "options":  {
+                                       "barRadius":  0,
+                                       "barWidth":  0.9,
+                                       "fillOpacity":  80,
+                                       "fullHighlight":  false,
+                                       "groupWidth":  0.7,
+                                       "legend":  {
+                                                      "calcs":  [
+
+                                                                ],
+                                                      "displayMode":  "list",
+                                                      "placement":  "bottom",
+                                                      "showLegend":  true
+                                                  },
+                                       "orientation":  "horizontal",
+                                       "showValue":  "auto",
+                                       "stacking":  "none",
+                                       "tooltip":  {
+                                                       "hideZeros":  false,
+                                                       "mode":  "single",
+                                                       "sort":  "none"
+                                                   },
+                                       "xField":  "bucket_start",
+                                       "xTickLabelRotation":  90,
+                                       "xTickLabelSpacing":  0
+                                   },
+                       "pluginVersion":  "12.4.2",
+                       "targets":  [
+                                       {
+                                           "datasource":  {
+                                                              "type":  "postgres",
+                                                              "uid":  "vigilex_pg"
+                                                          },
+                                           "format":  "table",
+                                           "rawSql":  "WITH binned AS (\n  SELECT\n    ROUND((width_bucket(final_confidence, 0.0, 1.0, 10) - 1) * 0.1, 1) AS bucket_start,\n    COUNT(*) AS n\n  FROM processed.coding_results\n  WHERE coding_path = \u0027hybrid_ce_llm_success\u0027\n    AND final_confidence IS NOT NULL\n    AND final_confidence \u003e 0\n  GROUP BY 1\n)\nSELECT\n  bucket_start,\n  CASE WHEN bucket_start \u003c 0.30 THEN n ELSE NULL END AS \"01 Flag for Review\",\n  CASE WHEN bucket_start \u003e= 0.30 AND bucket_start \u003c 0.65 THEN n ELSE NULL END AS \"02 Uncertain\",\n  CASE WHEN bucket_start \u003e= 0.65 THEN n ELSE NULL END AS \"03 Accept\"\nFROM binned\nORDER BY bucket_start",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "title":  "Ranking Index Distribution",
+                       "type":  "barchart"
+                   },
+                   {
+                       "datasource":  {
+                                          "type":  "postgres",
+                                          "uid":  "vigilex_pg"
+                                      },
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "color":  {
+                                                                          "mode":  "palette-classic"
+                                                                      },
+                                                            "custom":  {
+                                                                           "axisBorderShow":  false,
+                                                                           "axisCenteredZero":  false,
+                                                                           "axisColorMode":  "text",
+                                                                           "axisLabel":  "",
+                                                                           "axisPlacement":  "auto",
+                                                                           "fillOpacity":  80,
+                                                                           "gradientMode":  "none",
+                                                                           "hideFrom":  {
+                                                                                            "legend":  false,
+                                                                                            "tooltip":  false,
+                                                                                            "viz":  false
+                                                                                        },
+                                                                           "lineWidth":  1,
+                                                                           "scaleDistribution":  {
+                                                                                                     "type":  "linear"
+                                                                                                 },
+                                                                           "thresholdsStyle":  {
+                                                                                                   "mode":  "off"
+                                                                                               }
+                                                                       },
+                                                            "mappings":  [
+
+                                                                         ],
+                                                            "thresholds":  {
+                                                                               "mode":  "absolute",
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  0
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "red",
+                                                                                                 "value":  80
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        },
+                                           "overrides":  [
+                                                             {
+                                                                 "matcher":  {
+                                                                                 "id":  "byName",
+                                                                                 "options":  "01 Flag for Review"
+                                                                             },
+                                                                 "properties":  [
+                                                                                    {
+                                                                                        "id":  "color",
+                                                                                        "value":  {
+                                                                                                      "fixedColor":  "#E05252",
+                                                                                                      "mode":  "fixed"
+                                                                                                  }
+                                                                                    }
+                                                                                ]
+                                                             },
+                                                             {
+                                                                 "matcher":  {
+                                                                                 "id":  "byName",
+                                                                                 "options":  "02 Uncertain"
+                                                                             },
+                                                                 "properties":  [
+                                                                                    {
+                                                                                        "id":  "color",
+                                                                                        "value":  {
+                                                                                                      "fixedColor":  "#E8C84A",
+                                                                                                      "mode":  "fixed"
+                                                                                                  }
+                                                                                    }
+                                                                                ]
+                                                             },
+                                                             {
+                                                                 "matcher":  {
+                                                                                 "id":  "byName",
+                                                                                 "options":  "03 Accept"
+                                                                             },
+                                                                 "properties":  [
+                                                                                    {
+                                                                                        "id":  "color",
+                                                                                        "value":  {
+                                                                                                      "fixedColor":  "#52B788",
+                                                                                                      "mode":  "fixed"
+                                                                                                  }
+                                                                                    }
+                                                                                ]
+                                                             }
+                                                         ]
+                                       },
+                       "gridPos":  {
+                                       "h":  12,
+                                       "w":  4,
+                                       "x":  4,
+                                       "y":  0
+                                   },
+                       "id":  7,
+                       "options":  {
+                                       "barRadius":  0,
+                                       "barWidth":  0.7,
+                                       "fullHighlight":  false,
+                                       "groupWidth":  0.93,
+                                       "legend":  {
+                                                      "calcs":  [
+
+                                                                ],
+                                                      "displayMode":  "list",
+                                                      "placement":  "bottom",
+                                                      "showLegend":  true
+                                                  },
+                                       "orientation":  "horizontal",
+                                       "showValue":  "auto",
+                                       "stacking":  "none",
+                                       "tooltip":  {
+                                                       "hideZeros":  false,
+                                                       "mode":  "single",
+                                                       "sort":  "none"
+                                                   },
+                                       "xField":  "category",
+                                       "xTickLabelRotation":  0,
+                                       "xTickLabelSpacing":  0
+                                   },
+                       "pluginVersion":  "12.4.2",
+                       "targets":  [
+                                       {
+                                           "datasource":  {
+                                                              "type":  "postgres",
+                                                              "uid":  "vigilex_pg"
+                                                          },
+                                           "format":  "table",
+                                           "rawSql":  "SELECT\n  \u0027Distribution\u0027 AS category,\n  COUNT(*) FILTER (WHERE final_confidence \u003c 0.30)                              AS \"01 Flag for Review\",\n  COUNT(*) FILTER (WHERE final_confidence \u003e= 0.30 AND final_confidence \u003c 0.65) AS \"02 Uncertain\",\n  COUNT(*) FILTER (WHERE final_confidence \u003e= 0.65)                             AS \"03 Accept\"\nFROM processed.coding_results\nWHERE final_confidence \u003e 0\n  AND coding_path = \u0027hybrid_ce_llm_success\u0027",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "title":  "Triage Categories (Post-Fix Records)",
+                       "type":  "barchart"
+                   },
+                   {
+                       "datasource":  {
+                                          "type":  "postgres",
+                                          "uid":  "vigilex_pg"
+                                      },
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "color":  {
+                                                                          "mode":  "thresholds"
+                                                                      },
+                                                            "mappings":  [
+
+                                                                         ],
+                                                            "thresholds":  {
+                                                                               "mode":  "absolute",
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  0
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       },
+                       "gridPos":  {
+                                       "h":  11,
+                                       "w":  4,
+                                       "x":  8,
+                                       "y":  0
+                                   },
+                       "id":  4,
+                       "options":  {
+                                       "colorMode":  "background",
+                                       "graphMode":  "none",
+                                       "justifyMode":  "auto",
+                                       "orientation":  "auto",
+                                       "percentChangeColorMode":  "standard",
+                                       "reduceOptions":  {
+                                                             "calcs":  [
+                                                                           "lastNotNull"
+                                                                       ],
+                                                             "fields":  "",
+                                                             "values":  false
+                                                         },
+                                       "showPercentChange":  false,
+                                       "textMode":  "auto",
+                                       "wideLayout":  true
+                                   },
+                       "pluginVersion":  "12.4.2",
+                       "targets":  [
+                                       {
+                                           "datasource":  {
+                                                              "type":  "postgres",
+                                                              "uid":  "vigilex_pg"
+                                                          },
+                                           "format":  "table",
+                                           "rawSql":  "SELECT COUNT(*) AS \"Total Coded\" FROM processed.coding_results WHERE coding_path IS NOT NULL",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "datasource":  {
+                                                              "type":  "postgres",
+                                                              "uid":  "vigilex_pg"
+                                                          },
+                                           "format":  "table",
+                                           "rawSql":  "SELECT 62.5 AS \"Soft Recall@5 (%)\"",
+                                           "refId":  "C"
+                                       },
+                                       {
+                                           "datasource":  {
+                                                              "type":  "postgres",
+                                                              "uid":  "vigilex_pg"
+                                                          },
+                                           "format":  "table",
+                                           "rawSql":  "SELECT 83.3 AS \"Soft Recall@10 (%)\"",
+                                           "refId":  "D"
+                                       },
+                                       {
+                                           "datasource":  {
+                                                              "type":  "postgres",
+                                                              "uid":  "vigilex_pg"
+                                                          },
+                                           "format":  "table",
+                                           "rawSql":  "SELECT COUNT(DISTINCT pt_name) AS \"Unique PTs\" FROM processed.coding_results WHERE coding_path IS NOT NULL",
+                                           "refId":  "E"
+                                       }
+                                   ],
+                       "title":  "System Summary",
+                       "type":  "stat"
+                   },
+                   {
+                       "datasource":  {
+                                          "type":  "postgres",
+                                          "uid":  "vigilex_pg"
+                                      },
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "custom":  {
+                                                                           "align":  "auto",
+                                                                           "cellOptions":  {
+                                                                                               "type":  "auto"
+                                                                                           },
+                                                                           "filterable":  true,
+                                                                           "footer":  {
+                                                                                          "reducers":  [
+
+                                                                                                       ]
+                                                                                      },
+                                                                           "inspect":  false
+                                                                       },
+                                                            "mappings":  [
+
+                                                                         ],
+                                                            "thresholds":  {
+                                                                               "mode":  "absolute",
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  0
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "red",
+                                                                                                 "value":  80
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       },
+                       "gridPos":  {
+                                       "h":  26,
+                                       "w":  12,
+                                       "x":  12,
+                                       "y":  0
+                                   },
+                       "id":  99,
+                       "options":  {
+                                       "cellHeight":  "sm",
+                                       "showHeader":  true,
+                                       "sortBy":  [
+
+                                                  ]
+                                   },
+                       "pluginVersion":  "12.4.2",
+                       "targets":  [
+                                       {
+                                           "datasource":  {
+                                                              "type":  "postgres",
+                                                              "uid":  "vigilex_pg"
+                                                          },
+                                           "editorMode":  "code",
+                                           "format":  "table",
+                                           "rawQuery":  true,
+                                           "rawSql":  "SELECT mdr_report_key, pt_name, pt_code, llt_name,  ROUND(final_confidence::numeric, 3) AS confidence, ROUND(crossencoder_score::numeric, 3) AS crossencoder, coded_at FROM processed.coding_results WHERE coding_path IS NOT NULL ORDER BY coded_at DESC LIMIT 2000",
+                                           "refId":  "A",
+                                           "sql":  {
+                                                       "columns":  [
+                                                                       {
+                                                                           "parameters":  [
+
+                                                                                          ],
+                                                                           "type":  "function"
+                                                                       }
+                                                                   ],
+                                                       "groupBy":  [
+                                                                       {
+                                                                           "property":  {
+                                                                                            "type":  "string"
+                                                                                        },
+                                                                           "type":  "groupBy"
+                                                                       }
+                                                                   ],
+                                                       "limit":  50
+                                                   }
+                                       }
+                                   ],
+                       "title":  "Coding Results -- Full Table",
+                       "type":  "table"
+                   },
+                   {
+                       "datasource":  {
+                                          "type":  "postgres",
+                                          "uid":  "vigilex_pg"
+                                      },
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "color":  {
+                                                                          "fixedColor":  "#1F6FEB",
+                                                                          "mode":  "fixed"
+                                                                      },
+                                                            "mappings":  [
+
+                                                                         ],
+                                                            "thresholds":  {
+                                                                               "mode":  "absolute",
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  0
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        },
+                                           "overrides":  [
+                                                             {
+                                                                 "matcher":  {
+                                                                                 "id":  "byName",
+                                                                                 "options":  "LLM Success %"
+                                                                             },
+                                                                 "properties":  [
+                                                                                    {
+                                                                                        "id":  "unit",
+                                                                                        "value":  "percent"
+                                                                                    },
+                                                                                    {
+                                                                                        "id":  "thresholds",
+                                                                                        "value":  {
+                                                                                                      "mode":  "absolute",
+                                                                                                      "steps":  [
+                                                                                                                    {
+                                                                                                                        "color":  "red",
+                                                                                                                        "value":  0
+                                                                                                                    },
+                                                                                                                    {
+                                                                                                                        "color":  "yellow",
+                                                                                                                        "value":  70
+                                                                                                                    },
+                                                                                                                    {
+                                                                                                                        "color":  "green",
+                                                                                                                        "value":  90
+                                                                                                                    }
+                                                                                                                ]
+                                                                                                  }
+                                                                                    }
+                                                                                ]
+                                                             },
+                                                             {
+                                                                 "matcher":  {
+                                                                                 "id":  "byName",
+                                                                                 "options":  "Flagged %"
+                                                                             },
+                                                                 "properties":  [
+                                                                                    {
+                                                                                        "id":  "unit",
+                                                                                        "value":  "percent"
+                                                                                    },
+                                                                                    {
+                                                                                        "id":  "thresholds",
+                                                                                        "value":  {
+                                                                                                      "mode":  "absolute",
+                                                                                                      "steps":  [
+                                                                                                                    {
+                                                                                                                        "color":  "green",
+                                                                                                                        "value":  0
+                                                                                                                    },
+                                                                                                                    {
+                                                                                                                        "color":  "yellow",
+                                                                                                                        "value":  25
+                                                                                                                    },
+                                                                                                                    {
+                                                                                                                        "color":  "red",
+                                                                                                                        "value":  50
+                                                                                                                    }
+                                                                                                                ]
+                                                                                                  }
+                                                                                    }
+                                                                                ]
+                                                             },
+                                                             {
+                                                                 "matcher":  {
+                                                                                 "id":  "byName",
+                                                                                 "options":  "Timeout %"
+                                                                             },
+                                                                 "properties":  [
+                                                                                    {
+                                                                                        "id":  "unit",
+                                                                                        "value":  "percent"
+                                                                                    },
+                                                                                    {
+                                                                                        "id":  "thresholds",
+                                                                                        "value":  {
+                                                                                                      "mode":  "absolute",
+                                                                                                      "steps":  [
+                                                                                                                    {
+                                                                                                                        "color":  "green",
+                                                                                                                        "value":  0
+                                                                                                                    },
+                                                                                                                    {
+                                                                                                                        "color":  "yellow",
+                                                                                                                        "value":  5
+                                                                                                                    },
+                                                                                                                    {
+                                                                                                                        "color":  "red",
+                                                                                                                        "value":  15
+                                                                                                                    }
+                                                                                                                ]
+                                                                                                  }
+                                                                                    }
+                                                                                ]
+                                                             },
+                                                             {
+                                                                 "matcher":  {
+                                                                                 "id":  "byName",
+                                                                                 "options":  "Avg LLM (s)"
+                                                                             },
+                                                                 "properties":  [
+                                                                                    {
+                                                                                        "id":  "unit",
+                                                                                        "value":  "s"
+                                                                                    },
+                                                                                    {
+                                                                                        "id":  "thresholds",
+                                                                                        "value":  {
+                                                                                                      "mode":  "absolute",
+                                                                                                      "steps":  [
+                                                                                                                    {
+                                                                                                                        "color":  "green",
+                                                                                                                        "value":  0
+                                                                                                                    },
+                                                                                                                    {
+                                                                                                                        "color":  "yellow",
+                                                                                                                        "value":  30
+                                                                                                                    },
+                                                                                                                    {
+                                                                                                                        "color":  "red",
+                                                                                                                        "value":  55
+                                                                                                                    }
+                                                                                                                ]
+                                                                                                  }
+                                                                                    }
+                                                                                ]
+                                                             }
+                                                         ]
+                                       },
+                       "gridPos":  {
+                                       "h":  12,
+                                       "w":  4,
+                                       "x":  8,
+                                       "y":  11
+                                   },
+                       "id":  100,
+                       "options":  {
+                                       "colorMode":  "background",
+                                       "graphMode":  "none",
+                                       "justifyMode":  "auto",
+                                       "orientation":  "horizontal",
+                                       "percentChangeColorMode":  "standard",
+                                       "reduceOptions":  {
+                                                             "calcs":  [
+                                                                           "lastNotNull"
+                                                                       ],
+                                                             "fields":  "",
+                                                             "values":  false
+                                                         },
+                                       "showPercentChange":  false,
+                                       "textMode":  "value_and_name",
+                                       "wideLayout":  true
+                                   },
+                       "pluginVersion":  "12.4.2",
+                       "targets":  [
+                                       {
+                                           "datasource":  {
+                                                              "type":  "postgres",
+                                                              "uid":  "vigilex_pg"
+                                                          },
+                                           "format":  "table",
+                                           "rawSql":  "SELECT ROUND(100.0 * SUM(CASE WHEN llm_status = \u0027success\u0027 THEN 1 ELSE 0 END) / COUNT(*), 1) AS \"LLM Success %\" FROM processed.coding_results WHERE llm_status IS NOT NULL",
+                                           "refId":  "A"
+                                       },
+                                       {
+                                           "datasource":  {
+                                                              "type":  "postgres",
+                                                              "uid":  "vigilex_pg"
+                                                          },
+                                           "format":  "table",
+                                           "rawSql":  "SELECT ROUND(100.0 * SUM(CASE WHEN flagged = true THEN 1 ELSE 0 END) / NULLIF(SUM(CASE WHEN flagged IS NOT NULL THEN 1 ELSE 0 END), 0), 1) AS \"Flagged %\" FROM processed.coding_results WHERE flagged IS NOT NULL",
+                                           "refId":  "B"
+                                       },
+                                       {
+                                           "datasource":  {
+                                                              "type":  "postgres",
+                                                              "uid":  "vigilex_pg"
+                                                          },
+                                           "format":  "table",
+                                           "rawSql":  "SELECT ROUND(100.0 * SUM(CASE WHEN llm_status = \u0027timeout\u0027 THEN 1 ELSE 0 END) / COUNT(*), 1) AS \"Timeout %\" FROM processed.coding_results WHERE llm_status IS NOT NULL",
+                                           "refId":  "C"
+                                       },
+                                       {
+                                           "datasource":  {
+                                                              "type":  "postgres",
+                                                              "uid":  "vigilex_pg"
+                                                          },
+                                           "format":  "table",
+                                           "rawSql":  "SELECT ROUND(AVG(llm_latency_ms)/1000.0, 1) AS \"Avg LLM (s)\" FROM processed.coding_results WHERE llm_latency_ms IS NOT NULL AND llm_status = \u0027success\u0027",
+                                           "refId":  "D"
+                                       }
+                                   ],
+                       "title":  "Pipeline Health",
+                       "type":  "stat"
+                   },
+                   {
+                       "datasource":  {
+                                          "type":  "postgres",
+                                          "uid":  "vigilex_pg"
+                                      },
+                       "fieldConfig":  {
+                                           "defaults":  {
+                                                            "color":  {
+                                                                          "mode":  "palette-classic"
+                                                                      },
+                                                            "custom":  {
+                                                                           "axisBorderShow":  false,
+                                                                           "axisCenteredZero":  false,
+                                                                           "axisColorMode":  "text",
+                                                                           "axisLabel":  "",
+                                                                           "axisPlacement":  "auto",
+                                                                           "barAlignment":  0,
+                                                                           "barWidthFactor":  0.6,
+                                                                           "drawStyle":  "line",
+                                                                           "fillOpacity":  10,
+                                                                           "gradientMode":  "none",
+                                                                           "hideFrom":  {
+                                                                                            "legend":  false,
+                                                                                            "tooltip":  false,
+                                                                                            "viz":  false
+                                                                                        },
+                                                                           "insertNulls":  false,
+                                                                           "lineInterpolation":  "linear",
+                                                                           "lineWidth":  2,
+                                                                           "pointSize":  5,
+                                                                           "scaleDistribution":  {
+                                                                                                     "type":  "linear"
+                                                                                                 },
+                                                                           "showPoints":  "auto",
+                                                                           "showValues":  false,
+                                                                           "spanNulls":  false,
+                                                                           "stacking":  {
+                                                                                            "group":  "A",
+                                                                                            "mode":  "none"
+                                                                                        },
+                                                                           "thresholdsStyle":  {
+                                                                                                   "mode":  "off"
+                                                                                               }
+                                                                       },
+                                                            "mappings":  [
+
+                                                                         ],
+                                                            "thresholds":  {
+                                                                               "mode":  "absolute",
+                                                                               "steps":  [
+                                                                                             {
+                                                                                                 "color":  "green",
+                                                                                                 "value":  0
+                                                                                             },
+                                                                                             {
+                                                                                                 "color":  "red",
+                                                                                                 "value":  80
+                                                                                             }
+                                                                                         ]
+                                                                           }
+                                                        },
+                                           "overrides":  [
+
+                                                         ]
+                                       },
+                       "gridPos":  {
+                                       "h":  11,
+                                       "w":  8,
+                                       "x":  0,
+                                       "y":  12
+                                   },
+                       "id":  1,
+                       "options":  {
+                                       "legend":  {
+                                                      "calcs":  [
+
+                                                                ],
+                                                      "displayMode":  "list",
+                                                      "placement":  "bottom",
+                                                      "showLegend":  true
+                                                  },
+                                       "tooltip":  {
+                                                       "hideZeros":  false,
+                                                       "mode":  "single",
+                                                       "sort":  "none"
+                                                   }
+                                   },
+                       "pluginVersion":  "12.4.2",
+                       "targets":  [
+                                       {
+                                           "datasource":  {
+                                                              "type":  "postgres",
+                                                              "uid":  "vigilex_pg"
+                                                          },
+                                           "format":  "time_series",
+                                           "rawSql":  "SELECT\n  date_trunc(\u0027hour\u0027, coded_at) AS time,\n  COUNT(*) AS records_coded\nFROM processed.coding_results\nWHERE coded_at \u003e= NOW() - INTERVAL \u00277 days\u0027\n  AND coding_path IS NOT NULL\nGROUP BY 1\nORDER BY 1",
+                                           "refId":  "A"
+                                       }
+                                   ],
+                       "title":  "Coding Throughput (records/hour)",
+                       "type":  "timeseries"
+                   }
+               ],
+    "preload":  false,
+    "refresh":  "30s",
+    "schemaVersion":  42,
+    "tags":  [
+                 "sentinelai",
+                 "meddra",
+                 "vigilex"
+             ],
+    "templating":  {
+                       "list":  [
+
+                                ]
+                   },
+    "time":  {
+                 "from":  "now-7d",
+                 "to":  "now"
+             },
+    "timepicker":  {
+
+                   },
+    "timezone":  "browser",
+    "title":  "SentinelAI -- MedDRA Coding Monitor",
+    "uid":  "sentinelai-coding-v1",
+    "version":  49,
+    "weekStart":  ""
 }
