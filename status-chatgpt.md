@@ -103,3 +103,28 @@ From previous Drive searches, existing material supports:
 Use the existing Enhancv AI/Data Scientist CV as the base and convert it first into the `Health AI Engineer` version. Then check for CDM-fallback wording and ATS readability.
 
 For implementation work, prepare instructions/prompts for Claude Code/Fable/Opus rather than executing code directly in ChatGPT.
+
+---
+
+## Session update — 2026-06-12 — append-only status rule
+
+### Change made
+
+`PROJECT_MEMORY.md` was updated to clarify that `status-chatgpt.md` must be handled as an append-only handoff log.
+
+### New rule
+
+At the end of each ChatGPT working session on `job-search-system`, add a new dated update at the bottom of `status-chatgpt.md` and preserve all previous entries.
+
+### Reason
+
+The status file should function as a chronological project log, not as a single overwritten summary.
+
+### Current open tasks remain
+
+- Identify best existing Enhancv CV base version.
+- Build three concrete CV text versions.
+- Add bullet library.
+- Add LinkedIn draft.
+- Add SentinelAI/Vigilex portfolio summary.
+- Keep ChatGPT role limited to planning/review/text/prompt work; Claude Code/Fable/Opus handles execution.
