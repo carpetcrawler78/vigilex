@@ -62,11 +62,13 @@ but should not itself execute code.
 
 ## Status handoff rule
 
-At the end of every working session on the `job-search-system` project, update:
+At the end of every working session on the `job-search-system` project, append a new dated entry to:
 
 `status-chatgpt.md`
 
-The update should summarize:
+Append-only rule: preserve all earlier status entries and add each new session update at the bottom of the file.
+
+The appended update should summarize:
 
 - current project state
 - files changed or created
