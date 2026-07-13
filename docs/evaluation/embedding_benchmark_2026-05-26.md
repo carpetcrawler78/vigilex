@@ -1,7 +1,7 @@
 # Embedding Model Benchmark -- 2026-05-26
 
 **Status:** Complete
-**Ran on:** Hetzner (46.225.109.99), tmux session 'bench', night 2026-05-25 -> 2026-05-26
+**Ran on:** Hetzner CX33 instance (EU), tmux session 'bench', night 2026-05-25 -> 2026-05-26
 **Script:** `scripts/bench_embedding_models.py --full`
 **Related:** VECTOR_MIGRATION_PLAN.md, EXECUTION_PLAN.md Phase 2
 
