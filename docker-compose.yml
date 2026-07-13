@@ -1,7 +1,7 @@
 version: "3.9"
 
 # SentinelAI (vigilex) — Docker Compose
-# Repo: github.com/carpetcrawler78/vigilex
+# Repo: github.com/carpetcrawler78/sentinelai-backend
 # Server: Hetzner CX33, Nürnberg
 
 networks:
@@ -182,12 +182,13 @@ services:
       GF_SERVER_ROOT_URL: http://localhost:3000
       GF_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       GF_SECURITY_ALLOW_EMBEDDING: "true"
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_RENDERING_SERVER_URL: http://renderer:8081/render
       GF_RENDERING_CALLBACK_URL: http://grafana:3000/
     ports:
-      - "0.0.0.0:3000:3000"   # public — add firewall rule
+      # local-only default; a public demo instance belongs in a separate
+      # docker-compose.demo.yml / override, not here
+      - "127.0.0.1:3000:3000"
     networks:
       - vigilex-net
     volumes:

@@ -1,4 +1,4 @@
-# SentinelAI (Backend: vigilex)
+# SentinelAI Backend
 
 > Status: Completed capstone / portfolio project.
 > The original Hetzner deployment is no longer running (deliberately paused,
@@ -6,25 +6,22 @@
 > documents the backend architecture, the coding pipeline, and the evaluation
 > results of a working system.
 
-Internal repo name: `vigilex`. Public name in presentations and portfolio:
-`SentinelAI`.
-
 ---
 
 ## Why this project exists
 
-Medical-device manufacturers must code every adverse-event report against
-the MedDRA terminology (~27k Preferred Terms) for regulatory submission.
-Today this is manual: one safety officer per company, ~10 min per case,
-~70% inter-coder agreement. SentinelAI was built as Capstone II of the
-neue fische AI Engineering Bootcamp 2025/2026 to test whether a retrieval +
-reranking + local-LLM pipeline can narrow that search space and produce
-consistent, auditable suggestions -- without sending patient-adjacent data
-to an external API.
+Regulated safety workflows frequently require adverse-event narratives to be
+mapped to standardized medical terminology such as MedDRA. Manual coding is
+time-consuming and shows inter-coder variability. SentinelAI explores
+AI-assisted MedDRA coding using public MAUDE narratives as the evaluation
+corpus. SentinelAI was built as Capstone II of the neue fische AI Engineering
+Bootcamp 2025/2026 to test whether a retrieval + reranking + local-LLM
+pipeline can narrow that search space and produce consistent, auditable
+suggestions -- without sending patient-adjacent data to an external API.
 
 The architecture is built around three EU regulations: GDPR (no patient
-data outside EU), EU AI Act (high-risk = human-in-the-loop), EU MDR
-(post-market surveillance + reproducible records).
+data outside EU), EU AI Act (Art. 14: proportionate human oversight for
+high-risk systems), EU MDR (post-market surveillance + reproducible records).
 
 ## What the system does
 
@@ -91,9 +88,11 @@ primary-vs-secondary, and relation logic. Too slow for 27k candidates, fast
 enough for 20.
 
 ### Why a local LLM?
-GDPR Art. 44 + the EU AI Act make external LLM APIs incompatible with
-patient-data workflows. Groq-hosted models were benchmarked for reference
-only and are explicitly excluded from any production path.
+External LLM APIs can introduce additional data-protection, processing-agreement
+and international-transfer requirements. The project therefore uses a local
+LLM runtime as a privacy-preserving architectural default. Groq-hosted models
+were benchmarked for reference only and are explicitly excluded from any
+production path.
 
 ## Tech stack
 
@@ -131,8 +130,8 @@ not yet part of this repository -- open item, to be added later.
 
 ```bash
 # Clone and install
-git clone https://github.com/carpetcrawler78/vigilex.git
-cd vigilex
+git clone https://github.com/carpetcrawler78/sentinelai-backend.git
+cd sentinelai-backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
@@ -149,7 +148,7 @@ pytest
 ```
 
 The full stack (Postgres + pgvector, Ollama, ingest worker, coding worker,
-FastAPI, Grafana) is defined in `docker/docker-compose.yml`. It previously
+FastAPI, Grafana) is defined in `docker-compose.yml`. It previously
 ran on a Hetzner CX33 instance (Nuremberg, EU) that has since been paused.
 
 ## What is included / not included
