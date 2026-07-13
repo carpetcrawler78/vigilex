@@ -18,9 +18,10 @@ Why add an LLM as a third stage?
 
 What is Ollama?
     Ollama is a tool that runs LLMs locally on your own hardware, without sending
-    data to any external API (like OpenAI or Anthropic). This is essential for
-    privacy-by-design: MAUDE data is technically public, but the architecture
-    demonstrates GDPR compliance for real clinical data contexts.
+    data to any external API (like OpenAI or Anthropic). I use it because the
+    MAUDE data here is technically public, but the whole point of this project
+    is to show a setup that would also work with real patient data under GDPR --
+    and that means no data should leave the system.
 
     The model runs on the Hetzner server's CPU/RAM.
     We use llama3.2:3b -- a 3-billion parameter model chosen because:
@@ -53,33 +54,29 @@ except ImportError:
 from vigilex.coding.reranker import RerankedResult
 
 
-# Ollama URL ist NICHT mehr als Modul-Konstante gefuehrt.
-# Aufloesung passiert in LLMCoder.__init__ (Argument oder env-var, sonst raise).
-# Grund: hardcoded "localhost:11434" hat am 12.05 24h Massen-Fallback erzeugt,
-# weil im Docker-Container localhost nicht auf den Host zeigt.
-# Siehe CLAUDE.md "Kritischer Befund 2026-05-13".
+# Die Ollama-URL wird nicht fest im Code eingetragen, sondern beim Start
+# uebergeben (Parameter oder Umgebungsvariable) - sonst gibt es einen Fehler.
+# Grund: "localhost" bedeutet im Docker-Container etwas anderes als auf
+# meinem Rechner. Das hat bei mir mal zu einem stillen Fehler gefuehrt,
+# den ich erst spaet gemerkt habe. Deshalb lieber direkt angeben.
+# STRICT_MODE muss zu coding.py passen, sonst werden Fehler in einem der beiden Module verschluckt.
 
 # The Ollama model to use. Must be pulled on the server first:
 #   ollama pull llama3.2
-# Bleibt hardcoded -- Architektur-Entscheidung (CX33 RAM-Constraint), nicht Deployment-Config.
+# Bleibt hardcoded, kein Deployment-Setting -- der Server (CX33) hat nur 8 GB
+# RAM, ein groesseres Modell wuerde da nicht mehr reinpassen.
 OLLAMA_MODEL = "llama3.2:3b"
 
-# ---------------------------------------------------------------------------
-# Strict-Mode -- "fail-fast in dev, fail-soft in prod"
-# Bei VIGILEX_STRICT=true werden Fehler hart durchgereicht statt
-# stillschweigend zu Fallback zu wechseln. Wichtig fuer Development:
-# Bugs werden sichtbar, nicht von der graceful-degradation versteckt.
-# Production (Default false): Fallback bleibt aktiv, kein Datenverlust.
-# ---------------------------------------------------------------------------
+# Strict-Mode: Wenn VIGILEX_STRICT=true gesetzt ist, bricht das Programm bei
+# einem Fehler sofort ab - praktisch beim Testen, damit ich nichts uebersehe.
+# Ohne diese Einstellung (Standard) laeuft es mit einer Ersatzloesung weiter,
+# damit keine Daten verloren gehen.
 STRICT_MODE = os.environ.get("VIGILEX_STRICT", "false").lower() == "true"
 
-# ---------------------------------------------------------------------------
-# Groq backend (EXPERIMENTAL -- NOT FOR PRODUCTION)
-# WARNING: Using Groq sends report narratives to an external API.
-#          Acceptable for benchmarking/capstone dev only.
-#          Do NOT use with real patient data or in a production deployment.
-#          Privacy-by-Design requires on-premise inference (Ollama).
-# ---------------------------------------------------------------------------
+# Groq ist nur zum Ausprobieren/Vergleichen da, nicht fertig eingebaut.
+# Wichtig: Groq laeuft ueber eine externe API - die Daten wuerden das
+# eigene System verlassen. Fuer echte (medizinische) Daten will ich das
+# nicht, deshalb nutze ich sonst Ollama, das komplett lokal laeuft.
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL   = "llama-3.1-8b-instant"  # fast, free tier, OpenAI-compatible API
 
@@ -236,7 +233,7 @@ class LLMCoder:
                 raise RuntimeError(
                     "LLMCoder needs ollama_url -- pass it explicitly OR "
                     "set OLLAMA_BASE_URL in the environment. "
-                    "No silent localhost default (see CLAUDE.md Befund 2026-05-13)."
+                    "No silent localhost default -- caused a hard-to-find bug before."
                 )
             self.ollama_url = ollama_url.rstrip("/")
         else:
@@ -257,7 +254,7 @@ class LLMCoder:
         Verify that the configured backend is reachable.
 
         In STRICT_MODE: any problem raises RuntimeError -- worker will not start.
-        In production mode: warnings only, worker continues (graceful degradation).
+        In production mode: only a warning is logged, worker keeps running.
 
         This is the first error-trap: catches config problems before the
         coding loop hides them in fallback records.

@@ -105,12 +105,9 @@ CONFIDENCE_THRESHOLD = 0.5   # final_confidence < 0.5 -> flagged for human revie
 # so you can identify which version produced which results in the database.
 MODEL_VERSION = os.getenv("MODEL_VERSION", "pipeline_v1")
 
-# ---------------------------------------------------------------------------
-# Strict-Mode -- "fail-fast in dev, fail-soft in prod"
-# Bei VIGILEX_STRICT=true wird der Worker bei LLM-Fehler abgebrochen statt
-# stillschweigend in den Fallback-Pfad zu fallen. Konsistent mit
-# llm_coder.py STRICT_MODE. Siehe CLAUDE.md "Kritischer Befund 2026-05-13".
-# ---------------------------------------------------------------------------
+# Strict-Mode: Wenn VIGILEX_STRICT=true gesetzt ist, bricht der Worker bei
+# einem LLM-Fehler sofort ab, statt still auf den Fallback-Pfad zu wechseln.
+# STRICT_MODE muss zu llm_coder.py passen, sonst werden Fehler in einem der beiden Module verschluckt.
 STRICT_MODE = os.environ.get("VIGILEX_STRICT", "false").lower() == "true"
 
 # ---------------------------------------------------------------------------
@@ -398,7 +395,7 @@ def code_report(
         except Exception as exc:
             if STRICT_MODE:
                 # Strict: Bug nicht in Logs verstecken, Worker bricht ab.
-                # Siehe CLAUDE.md Befund 13.05 -- so haetten wir es frueher gemerkt.
+                # Diese Pruefung haette einen frueheren Fehler schneller sichtbar gemacht.
                 logger.error(
                     "STRICT MODE: Stage 3 raised for %s -- re-raising to abort worker.",
                     report_key,
